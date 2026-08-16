@@ -100,3 +100,11 @@ Loader 契约（`@deepseek-ai/dsh-client-modules/lib/client.js` 源码注释直�
 契约 α → **直接改造工作区 `/Users/haifeng/Documents/dsh/package.json`**：替换 `dsh` 字段、确保 `exports["./client"]` 指向 `./dist/client.js`（保留其余 exports 条目）、新增 `scripts` 字段。安装路径（Task 6）：`dsh plugin --profile web add .`（实为 profile 内 pnpm add）；**安装必须在构建产物就绪后重新执行**，以让 profile 获得新的 package.json 元数据与 `./dist/client.js` bundle（`files` 字段当前不含 `dist/`，Task 6 需另行处理，见上「意外发现 2」）。
 
 **Task 1 fixes（review 修复提交）：** `files` 现含 `dist/`（bundle 随 `file:` 安装送达 profile）；`exports["./client"]` 改为裸字符串（不再指向不存在的 `dist/client.d.ts`）；`.gitignore` 改为 `dist/*` + `!dist/client.js`（重建的 bundle 不会被 `git add -A` 静默跳过）。
+
+## 最终结论（Task 6）
+
+- 契约 α 确认成立；安装命令 `dsh plugin --profile web add .`（会把 workspace package.json 硬链接到 profile，安装即重新链接 —— 修复 Task 1 记录过的硬链接断裂）
+- profile `files` 现含 `dist`（Task 1 修复）；`exports["./client"]` 为裸字符串 `./dist/client.js`
+- 运行时服务键：插件源码 `export const inject = ['slots','sessions','locale','settingsScope']`（package.json 的 `dsh.client.inject` 仍为宿主侧包 id 清单，Task 6 安装时核对是否被 loader 消费）
+- 下一步为人工步骤：重启 dsh web 后按手工验证清单核对（清单见 README 或本项目 spec §8）
+- 已知边界注释指针：`src/index.ts` 的 configEpoch/pendingSelfBalance 回显收敛语义（含极少见的外部编辑竞争自愈说明）
