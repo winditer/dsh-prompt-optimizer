@@ -670,6 +670,29 @@ function runStateTests(check: (name: string, fn: () => void) => void) {
     assert.strictEqual(reducePreview(fromError, { type: 'guide' }).status, 'guide');
   });
 
+  check('guide while optimizing returns same reference', () => {
+    const began = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
+    assert.strictEqual(reducePreview(began, { type: 'guide' }), began);
+  });
+
+  check('begin after fail resets errorKind and bumps generation', () => {
+    const began = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
+    const failed = reducePreview(began, { type: 'fail', kind: 'http' });
+    const retried = reducePreview(failed, { type: 'begin' });
+    assert.strictEqual(retried.status, 'optimizing');
+    assert.strictEqual(retried.errorKind, null);
+    assert.strictEqual(retried.generation, began.generation + 1);
+  });
+
+  check('real transitions never alias INITIAL_PREVIEW', () => {
+    const began = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
+    assert.notStrictEqual(began, INITIAL_PREVIEW);
+    const shown = reducePreview(began, { type: 'show', result: 'R' });
+    assert.notStrictEqual(shown, INITIAL_PREVIEW);
+    const failed = reducePreview(began, { type: 'fail', kind: 'http' });
+    assert.notStrictEqual(failed, INITIAL_PREVIEW);
+  });
+
   check('validateSettingsForm', () => {
     assert.deepStrictEqual(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: 'm' }), {});
     assert.ok(validateSettingsForm({ baseUrl: '', apiKey: 'k', model: 'm' }).baseUrl);
@@ -677,6 +700,19 @@ function runStateTests(check: (name: string, fn: () => void) => void) {
     assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: '' }).model);
     const bad = validateSettingsForm({ baseUrl: 'nonsense', apiKey: 'k', model: 'm' });
     assert.ok(bad.baseUrl);
+  });
+
+  check('validateSettingsForm rejects ftp and query/hash', () => {
+    assert.ok(validateSettingsForm({ baseUrl: 'ftp://x.y', apiKey: 'k', model: 'm' }).baseUrl);
+    assert.ok(validateSettingsForm({ baseUrl: 'https://x.y/v1?k=1', apiKey: 'k', model: 'm' }).baseUrl);
+    assert.ok(validateSettingsForm({ baseUrl: 'https://x.y/v1#frag', apiKey: 'k', model: 'm' }).baseUrl);
+  });
+
+  check('validateSettingsForm rejects whitespace-only values', () => {
+    const blank = validateSettingsForm({ baseUrl: '  ', apiKey: ' ', model: '\t' });
+    assert.ok(blank.baseUrl);
+    assert.ok(blank.apiKey);
+    assert.ok(blank.model);
   });
 }
 
@@ -692,6 +728,12 @@ function runLocaleTests(check: (name: string, fn: () => void) => void) {
   check('all values non-empty', () => {
     for (const [k, v] of Object.entries(zh)) assert.ok(String(v).trim().length > 0, `zh.${k} empty`);
     for (const [k, v] of Object.entries(en)) assert.ok(String(v).trim().length > 0, `en.${k} empty`);
+  });
+  check('zh/en placeholder tokens match per key', () => {
+    const tokens = (v: string) => [...(v.match(/\{\w+\}/g) ?? [])].sort();
+    for (const k of Object.keys(zh) as Array<keyof typeof zh>) {
+      assert.deepStrictEqual(tokens(zh[k]), tokens(en[k]), `placeholder drift at ${k}`);
+    }
   });
 }
 ```
@@ -725,7 +767,7 @@ function runLocaleTests(check: (name: string, fn: () => void) => void) {
 | error.timeout | 请求超时，请检查网络与接口地址 | Request timed out; check your network and endpoint |
 | error.network | 网络错误，请检查网络与接口地址 | Network error; check your network and endpoint |
 | error.cors | 接口不支持跨域，请换用支持 CORS 的网关 | Endpoint blocks CORS; use a gateway that allows it |
-| error.http | 请求失败（HTTP {status}） | Request failed (HTTP {status}) |
+| error.http | 请求失败（HTTP 错误） | Request failed (HTTP error) |
 | error.bad-response | 返回内容格式异常 | Unexpected response format |
 | error.empty | 返回内容为空，请重试 | Empty result; please retry |
 | error.config | 配置不完整，请到设置中检查 | Incomplete configuration; check settings |
@@ -764,7 +806,7 @@ export const zh = {
   'error.timeout': '请求超时，请检查网络与接口地址',
   'error.network': '网络错误，请检查网络与接口地址',
   'error.cors': '接口不支持跨域，请换用支持 CORS 的网关',
-  'error.http': '请求失败（HTTP {status}）',
+  'error.http': '请求失败（HTTP 错误）',
   'error.bad-response': '返回内容格式异常',
   'error.empty': '返回内容为空，请重试',
   'error.config': '配置不完整，请到设置中检查',
@@ -779,7 +821,7 @@ export const zh = {
   'settings.clickToEdit': '点击配置',
 } as const;
 
-export const en = {
+export const en: LocaleDict = {
   'button.aria': 'Optimize prompt',
   'card.title': 'Optimized prompt',
   'card.replace': 'Use draft',
@@ -799,7 +841,7 @@ export const en = {
   'error.timeout': 'Request timed out; check your network and endpoint',
   'error.network': 'Network error; check your network and endpoint',
   'error.cors': 'Endpoint blocks CORS; use a gateway that allows it',
-  'error.http': 'Request failed (HTTP {status})',
+  'error.http': 'Request failed (HTTP error)',
   'error.bad-response': 'Unexpected response format',
   'error.empty': 'Empty result; please retry',
   'error.config': 'Incomplete configuration; check settings',
@@ -890,6 +932,7 @@ export function validateSettingsForm(values: SettingsFormValues): Record<string,
     try {
       const u = new URL(url);
       if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('protocol');
+      if (u.search || u.hash) throw new Error('query-or-hash');
     } catch {
       errors.baseUrl = 'settings.baseUrl';
     }
@@ -1023,9 +1066,12 @@ export interface OptimizerStoreHandle {
 
 type CreateOptimizerStore = () => OptimizerStoreHandle;
 
+/** 当前 in-flight 请求的控制器（模块级）：close 时中止，防止迟到 show() 复活已关闭卡片 */
+let activeController: AbortController | null = null;
+
 export const createOptimizerStore: CreateOptimizerStore = () => {
   const handle = defineStore({
-    init: (): PreviewState => INITIAL_PREVIEW,
+    init: () => ({ ...INITIAL_PREVIEW }), // 每会话副本：INITIAL_PREVIEW 是只读共享常量，勿跨会话共享引用
     actions: {
       begin: (d: PreviewState) => {
         const next = reducePreview(d, { type: 'begin' });
@@ -1036,7 +1082,12 @@ export const createOptimizerStore: CreateOptimizerStore = () => {
       show: (d: PreviewState, result: string) => Object.assign(d, reducePreview(d, { type: 'show', result })),
       fail: (d: PreviewState, kind: OptimizeErrorKind) => Object.assign(d, reducePreview(d, { type: 'fail', kind })),
       guide: (d: PreviewState) => Object.assign(d, reducePreview(d, { type: 'guide' })),
-      close: (d: PreviewState) => Object.assign(d, reducePreview(d, { type: 'close' })),
+      close: (d: PreviewState) => {
+        // 卡片被关闭/放弃：若请求在途则取消，迟到的 show()/fail() 不得复活已关闭卡片
+        activeController?.abort();
+        activeController = null;
+        return Object.assign(d, reducePreview(d, { type: 'close' }));
+      },
     },
   });
   return handle as OptimizerStoreHandle;
@@ -1058,6 +1109,7 @@ export async function runOptimize(
   if (!actions.begin()) return;
 
   const controller = new AbortController();
+  activeController = controller; // 注册给 close()，供卡片关闭时取消在途请求
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -1079,10 +1131,13 @@ export async function runOptimize(
     }
     actions.fail(toErrorKind(e).kind);
   } finally {
+    if (activeController === controller) activeController = null;
     clearTimeout(timer);
   }
 }
 ```
+
+> 注（评审补充）：`INITIAL_PREVIEW` 为只读共享常量（reducer 永不写回它，`close` 直接返回它），store 的 `init` 必须返回 `{ ...INITIAL_PREVIEW }` 每会话副本，且 `close` 须经模块级 `activeController?.abort()` 取消在途请求——否则跨会话共享同一对象引用、迟到的 `show()` 会把已关闭卡片复活为 preview 态。
 
 - [ ] **Step 5: 实现 `src/OptimizeButton.tsx`**
 
@@ -1856,6 +1911,8 @@ export function SettingsRow(props: SettingsRowProps) {
   );
 }
 ```
+
+> 注（评审补充）：表单校验已与 `checkConfig` 对齐（baseUrl 拒绝 query/hash）。
 
 - [ ] **Step 5: `src/index.ts` 追加设置行注册与快捷键**
 

@@ -3,7 +3,7 @@
 import assert from 'node:assert';
 import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind } from '../src/optimizer.js';
 import { NS, zh, en } from '../src/locales.js';
-import { INITIAL_PREVIEW, reducePreview, type PreviewState } from '../src/preview-state.js';
+import { INITIAL_PREVIEW, reducePreview } from '../src/preview-state.js';
 import { validateSettingsForm } from '../src/settings-form-state.js';
 
 async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
@@ -254,6 +254,29 @@ async function runStateTests(check: (name: string, fn: () => void | Promise<void
     assert.strictEqual(reducePreview(fromError, { type: 'guide' }).status, 'guide');
   });
 
+  await check('guide while optimizing returns same reference', () => {
+    const began = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
+    assert.strictEqual(reducePreview(began, { type: 'guide' }), began);
+  });
+
+  await check('begin after fail resets errorKind and bumps generation', () => {
+    const began = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
+    const failed = reducePreview(began, { type: 'fail', kind: 'http' });
+    const retried = reducePreview(failed, { type: 'begin' });
+    assert.strictEqual(retried.status, 'optimizing');
+    assert.strictEqual(retried.errorKind, null);
+    assert.strictEqual(retried.generation, began.generation + 1);
+  });
+
+  await check('real transitions never alias INITIAL_PREVIEW', () => {
+    const began = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
+    assert.notStrictEqual(began, INITIAL_PREVIEW);
+    const shown = reducePreview(began, { type: 'show', result: 'R' });
+    assert.notStrictEqual(shown, INITIAL_PREVIEW);
+    const failed = reducePreview(began, { type: 'fail', kind: 'http' });
+    assert.notStrictEqual(failed, INITIAL_PREVIEW);
+  });
+
   await check('validateSettingsForm', () => {
     assert.deepStrictEqual(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: 'm' }), {});
     assert.ok(validateSettingsForm({ baseUrl: '', apiKey: 'k', model: 'm' }).baseUrl);
@@ -261,6 +284,19 @@ async function runStateTests(check: (name: string, fn: () => void | Promise<void
     assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: '' }).model);
     const bad = validateSettingsForm({ baseUrl: 'nonsense', apiKey: 'k', model: 'm' });
     assert.ok(bad.baseUrl);
+  });
+
+  await check('validateSettingsForm rejects ftp and query/hash', () => {
+    assert.ok(validateSettingsForm({ baseUrl: 'ftp://x.y', apiKey: 'k', model: 'm' }).baseUrl);
+    assert.ok(validateSettingsForm({ baseUrl: 'https://x.y/v1?k=1', apiKey: 'k', model: 'm' }).baseUrl);
+    assert.ok(validateSettingsForm({ baseUrl: 'https://x.y/v1#frag', apiKey: 'k', model: 'm' }).baseUrl);
+  });
+
+  await check('validateSettingsForm rejects whitespace-only values', () => {
+    const blank = validateSettingsForm({ baseUrl: '  ', apiKey: ' ', model: '\t' });
+    assert.ok(blank.baseUrl);
+    assert.ok(blank.apiKey);
+    assert.ok(blank.model);
   });
 }
 
@@ -276,6 +312,12 @@ async function runLocaleTests(check: (name: string, fn: () => void | Promise<voi
   await check('all values non-empty', () => {
     for (const [k, v] of Object.entries(zh)) assert.ok(String(v).trim().length > 0, `zh.${k} empty`);
     for (const [k, v] of Object.entries(en)) assert.ok(String(v).trim().length > 0, `en.${k} empty`);
+  });
+  await check('zh/en placeholder tokens match per key', () => {
+    const tokens = (v: string) => [...(v.match(/\{\w+\}/g) ?? [])].sort();
+    for (const k of Object.keys(zh) as Array<keyof typeof zh>) {
+      assert.deepStrictEqual(tokens(zh[k]), tokens(en[k]), `placeholder drift at ${k}`);
+    }
   });
 }
 

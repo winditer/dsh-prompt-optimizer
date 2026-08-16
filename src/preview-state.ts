@@ -11,6 +11,7 @@ export interface PreviewState {
   generation: number;
 }
 
+/** 只读共享常量：reducer 永不写回它或返回可变的新对象；消费者（Task 4 store 胶水）必须以 { ...INITIAL_PREVIEW } 为每会话种子 */
 export const INITIAL_PREVIEW: PreviewState = {
   status: 'idle',
   result: '',
@@ -42,5 +43,7 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
       return state.status === 'optimizing' ? state : { ...state, status: 'guide' };
     case 'close':
       return INITIAL_PREVIEW;
+    default:
+      return state;
   }
 }

@@ -22,7 +22,7 @@ export const zh = {
   'error.timeout': '请求超时，请检查网络与接口地址',
   'error.network': '网络错误，请检查网络与接口地址',
   'error.cors': '接口不支持跨域，请换用支持 CORS 的网关',
-  'error.http': '请求失败（HTTP {status}）',
+  'error.http': '请求失败（HTTP 错误）',
   'error.bad-response': '返回内容格式异常',
   'error.empty': '返回内容为空，请重试',
   'error.config': '配置不完整，请到设置中检查',
@@ -37,7 +37,7 @@ export const zh = {
   'settings.clickToEdit': '点击配置',
 } as const;
 
-export const en = {
+export const en: LocaleDict = {
   'button.aria': 'Optimize prompt',
   'card.title': 'Optimized prompt',
   'card.replace': 'Use draft',
@@ -57,7 +57,7 @@ export const en = {
   'error.timeout': 'Request timed out; check your network and endpoint',
   'error.network': 'Network error; check your network and endpoint',
   'error.cors': 'Endpoint blocks CORS; use a gateway that allows it',
-  'error.http': 'Request failed (HTTP {status})',
+  'error.http': 'Request failed (HTTP error)',
   'error.bad-response': 'Unexpected response format',
   'error.empty': 'Empty result; please retry',
   'error.config': 'Incomplete configuration; check settings',

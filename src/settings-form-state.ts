@@ -16,6 +16,7 @@ export function validateSettingsForm(values: SettingsFormValues): Record<string,
     try {
       const u = new URL(url);
       if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('protocol');
+      if (u.search || u.hash) throw new Error('query-or-hash');
     } catch {
       errors.baseUrl = 'settings.baseUrl';
     }
