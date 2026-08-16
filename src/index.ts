@@ -10,14 +10,10 @@ import { OptimizeButton } from './OptimizeButton.tsx';
 import { PreviewCard } from './PreviewCard.tsx';
 import { SettingsRow } from './SettingsRow.tsx';
 import { createSettingsFormStore } from './settings-store.js';
+import { classifyRefresh } from './settings-epoch.js';
 
 /** settings namespace（与插件 id 一致） */
 const SETTINGS_NS = 'prompt-optimizer';
-
-/** 配置三字段逐一相等（mergeConfig 产物已归一化，浅比较即可；用于自回声判定） */
-function configEquals(a: PromptConfig, b: PromptConfig): boolean {
-  return a.baseUrl === b.baseUrl && a.apiKey === b.apiKey && a.model === b.model;
-}
 
 /**
  * 声明插件依赖的客户端服务（cordis service keys）：apply 内经 `ctx.<service>` 访问的服务必须在此声明。
@@ -36,21 +32,23 @@ export function apply(ctx: ClientContext) {
   // 2. 配置镜像（settingsScope 为唯一事实源）
   const settingsScope = ctx.settingsScope.bind({ namespace: SETTINGS_NS });
   let configMirror: PromptConfig = mergeConfig(undefined);
-  // 外部配置变化纪元：驱动设置表单的 seed 修订号（见 SettingsRow）——外部变化令纪元递增从而使表单重播种
+  // 外部配置变化纪元：驱动设置表单的 seed 修订号（见 SettingsRow）——表单 seed 修订号 = 本地提交序号
+  // + configEpoch；configEpoch 仅在「外部配置变化」（非自身写回）时递增（宿主逐字段回显经收敛判定排除）。
+  // 已知边界：自身写入回合中发生的外部字段编辑可能被吞（回合收敛判定不匹配），镜像照常更新，下次自身写入自愈
   let configEpoch = 0;
-  // 最近一次本地保存/重置的写入目标：用于区分 refreshConfig 的自回声（自身写入）与外部变化，
-  // 只有外部变化才递增 configEpoch，保证保存后的表单抑制不被自身写入的回声破坏
-  let lastSelfWrite: PromptConfig | null = null;
-  const refreshConfig = () => {
-    const next = mergeConfig(settingsScope.getSnapshot().value);
-    // 自回声（next 与本地刚写入的目标一致）不计纪元；与目标不一致（或本无目标）的外部变化 → 纪元 +1
-    if (lastSelfWrite === null || !configEquals(next, lastSelfWrite)) {
-      configEpoch += 1;
-      lastSelfWrite = null;
-    }
-    configMirror = next;
-  };
-  refreshConfig();
+  // 自身写入的目标（pending 平衡标记）：保存/重置时先于 set 置为写入目标；宿主逐字段回显收敛
+  // （classifyRefresh 返回 'converged'，当前快照与目标全字段相等）后置空——据此把自身写入的回声
+  // 与真正的外部配置变化区分开，自身写入不递增 configEpoch
+  let pendingSelfBalance: PromptConfig | null = null;
+  function refreshConfig(): void {
+    const cur = mergeConfig(settingsScope.getSnapshot()?.value);
+    const kind = classifyRefresh(cur, pendingSelfBalance);
+    if (kind === 'converged') pendingSelfBalance = null; // 收敛：本轮全部回显完毕
+    if (kind === 'external') configEpoch += 1;
+    configMirror = cur;
+  }
+  // 启动直接赋值（不递增纪元）：宿主异步初始加载的回显 → subscribe → refreshConfig 会递增一次，属预期
+  configMirror = mergeConfig(settingsScope.getSnapshot()?.value);
   ctx.effect(
     () => settingsScope.subscribe(() => refreshConfig()),
     'prompt-optimizer: settings subscription',
@@ -103,30 +101,26 @@ export function apply(ctx: ClientContext) {
   const settingsStore = createSettingsFormStore();
   const saveConfig = (raw: Partial<PromptConfig>) => {
     const merged = mergeConfig({ ...configMirror, ...raw });
-    // 写入目标记录为实际落盘值（apiKey 已 trim）：settingsScope.set 为异步 RPC，落盘后经
-    // settingsScope.subscribe → refreshConfig 回声；与 lastSelfWrite 一致则不计入 configEpoch。
-    // 注意：此处不调用 refreshConfig()——同步读到的仍是写入前的旧快照（RPC 未落盘），
-    // 镜像更新统一走 subscribe 回声路径。
     const written: PromptConfig = {
       baseUrl: merged.baseUrl,
       apiKey: merged.apiKey.trim(),
       model: merged.model,
     };
+    // pending 置目标（先于 set；目标=实际落盘值，apiKey 已 trim）：set 为异步逐字段 RPC，落盘后经
+    // settingsScope.subscribe → refreshConfig 回显；回显收敛前一律 classifyRefresh='in-progress'，
+    // 不递增 configEpoch。注意：此处不调用 refreshConfig()——同步读到的仍是写入前的旧快照（RPC 未落盘），
+    // 镜像更新统一走 subscribe 回声路径。
+    pendingSelfBalance = written;
     settingsScope.set('baseUrl', written.baseUrl);
     settingsScope.set('apiKey', written.apiKey);
     settingsScope.set('model', written.model);
-    lastSelfWrite = written;
   };
   const resetConfig = () => {
-    const written: PromptConfig = {
-      baseUrl: DEFAULTS.baseUrl,
-      apiKey: DEFAULTS.apiKey,
-      model: DEFAULTS.model,
-    };
-    settingsScope.set('baseUrl', written.baseUrl);
-    settingsScope.set('apiKey', written.apiKey);
-    settingsScope.set('model', written.model);
-    lastSelfWrite = written;
+    // pending 置目标（先于 set）：恢复默认值的逐字段回显同样按收敛判定，不递增 configEpoch
+    pendingSelfBalance = { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model };
+    settingsScope.set('baseUrl', DEFAULTS.baseUrl);
+    settingsScope.set('apiKey', DEFAULTS.apiKey);
+    settingsScope.set('model', DEFAULTS.model);
   };
 
   ctx.inject(['slots'], (scope) => {

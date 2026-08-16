@@ -6,6 +6,7 @@ import { NS, zh, en, langOf } from '../src/locales.js';
 import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-state.js';
 import { validateSettingsForm } from '../src/settings-form-state.js';
 import { INITIAL_SETTINGS_FORM, reduceSettingsForm } from '../src/settings-form-state.js';
+import { classifyRefresh } from '../src/settings-epoch.js';
 
 async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
   await check('normalizeBaseUrl trims trailing slashes', () => {
@@ -395,6 +396,29 @@ async function runSettingsStoreTests(check: (name: string, fn: () => void | Prom
   });
 }
 
+async function runEpochTests(check: (name: string, fn: () => void | Promise<void>) => void) {
+  await check('classifyRefresh: external when no pending write', () => {
+    const cur = { baseUrl: 'https://a.com', apiKey: 'k', model: 'm' };
+    assert.strictEqual(classifyRefresh(cur, null), 'external');
+  });
+
+  await check('classifyRefresh: in-progress during partial echoes, converged at full target', () => {
+    const target = { baseUrl: 'https://new.com', apiKey: 'k2', model: 'm2' };
+    const partials = [
+      { baseUrl: 'https://new.com', apiKey: 'k', model: 'm' },      // echo1: baseUrl only
+      { baseUrl: 'https://new.com', apiKey: 'k2', model: 'm' },     // echo2: baseUrl+apiKey
+    ];
+    for (const p of partials) assert.strictEqual(classifyRefresh(p, target), 'in-progress');
+    assert.strictEqual(classifyRefresh(target, target), 'converged');
+  });
+
+  await check('classifyRefresh: external edit mid-round is not converged', () => {
+    const target = { baseUrl: 'https://new.com', apiKey: 'k2', model: 'm2' };
+    const ext = { baseUrl: 'https://new.com', apiKey: 'k2', model: 'external' };
+    assert.strictEqual(classifyRefresh(ext, target), 'in-progress');
+  });
+}
+
 export async function run(): Promise<boolean> {
   const results: string[] = [];
   const failures: string[] = [];
@@ -436,6 +460,7 @@ export async function run(): Promise<boolean> {
   await runLocaleTests(check);
   await runOptimizeStoreTests(check);
   await runSettingsStoreTests(check);
+  await runEpochTests(check);
 
   for (const r of results) console.log(r);
   if (failures.length > 0) {

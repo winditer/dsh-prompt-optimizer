@@ -1594,9 +1594,10 @@ git commit -m "feat: optimize button + preview card wired into conversation inpu
 
 **Files:**
 - Create: `src/settings-store.ts`（defineStore 薄封装：表单草稿 + 信号订阅）
+- Create: `src/settings-epoch.ts`（镜像刷新分类纯函数 `classifyRefresh`：自身写入回显收敛判定，TDD 组 `runEpochTests` 覆盖）
 - Create: `src/SettingsRow.tsx`
-- Modify: `src/index.ts`（注册 `settings.general.item` + 快捷键监听）
-- Modify: `tests/entry.ts`（追加 `runSettingsStoreTests`：仍只测纯函数）
+- Modify: `src/index.ts`（注册 `settings.general.item` + 快捷键监听 + epoch 收敛接线）
+- Modify: `tests/entry.ts`（追加 `runSettingsStoreTests`、`runEpochTests`：仍只测纯函数）
 
 **Interfaces:**
 - Consumes: `validateSettingsForm`（`./settings-form-state.js`）、`mergeConfig`/`DEFAULTS`（`./optimizer.js`）、`NS`（`./locales.js`）、`SettingsFormValues`
@@ -1938,26 +1939,30 @@ export function SettingsRow(props: SettingsRowProps) {
 
 > 注（评审补充）：表单校验已与 `checkConfig` 对齐（baseUrl 拒绝 query/hash）。
 >
-> 注（Task 5 评审补充）：表单 seed 修订号 = 本地提交序号 + configEpoch（外部配置变化（跨标签页/外部写入）经 epoch 重播种；保存后的抑制仍由本地序号守卫）。
+> 注（Task 5 评审补充）：表单 seed 修订号 = 本地提交序号 + configEpoch；configEpoch 只在外部配置变化时递增——宿主 `settingsScope.set` 逐字段异步回显由纯函数 `classifyRefresh`（src/settings-epoch.ts）判定收敛，自身写入不触发 epoch 增长（保存后抑制语义保持）；回合中外部编辑的罕见竞争会延迟同步，由下次自身写入自愈。
 
 - [ ] **Step 5: `src/index.ts` 追加设置行注册与快捷键**
 
 在 `apply()` 中、会话槽位注册之后追加（`src/index.ts` 编辑）；并在 `apply()` 的配置镜像区（Task 3 所建）追加外部配置变化纪元：
 
 ```ts
-  // 2.（Task 3 配置镜像区追加）外部配置变化纪元：驱动设置表单的 seed 修订号（见 Step 4/5 注）
+  // 2.（Task 3 配置镜像区追加）外部配置变化纪元：驱动设置表单的 seed 修订号——表单 seed 修订号
+  // = 本地提交序号 + configEpoch；configEpoch 仅在「外部配置变化」（非自身写回）时递增
+  // （宿主逐字段回显经收敛判定排除）。已知边界：自身写入回合中发生的外部字段编辑可能被吞
+  // （回合收敛判定不匹配），镜像照常更新，下次自身写入自愈。
   let configEpoch = 0;
-  // 最近一次本地保存/重置的写入目标：区分 refreshConfig 的自回声（自身写入）与外部变化，
-  // 只有外部变化才递增 configEpoch，保证保存后的表单抑制不被自身写入的回声破坏
-  let lastSelfWrite: PromptConfig | null = null;
-  const refreshConfig = () => {
-    const next = mergeConfig(settingsScope.getSnapshot().value);
-    if (lastSelfWrite === null || !configEquals(next, lastSelfWrite)) {
-      configEpoch += 1; // 外部配置变化 → 纪元 +1，设置表单据此重播种
-      lastSelfWrite = null;
-    }
-    configMirror = next;
-  };
+  // 自身写入的目标（pending 平衡标记）：保存/重置时先于 set 置为写入目标；宿主逐字段回显收敛
+  // （classifyRefresh 返回 'converged'，当前快照与目标全字段相等）后置空——自身写入的回声不递增 configEpoch
+  let pendingSelfBalance: PromptConfig | null = null;
+  function refreshConfig(): void {
+    const cur = mergeConfig(settingsScope.getSnapshot()?.value);
+    const kind = classifyRefresh(cur, pendingSelfBalance);
+    if (kind === 'converged') pendingSelfBalance = null; // 收敛：本轮全部回显完毕
+    if (kind === 'external') configEpoch += 1;           // 外部配置变化 → 纪元 +1，设置表单据此重播种
+    configMirror = cur;
+  }
+  // 启动直接赋值（不递增纪元）：宿主异步初始加载的回显 → subscribe → refreshConfig 会递增一次，属预期
+  configMirror = mergeConfig(settingsScope.getSnapshot()?.value);
 ```
 
 ```ts
@@ -1965,29 +1970,25 @@ export function SettingsRow(props: SettingsRowProps) {
   const settingsStore = createSettingsFormStore();
   const saveConfig = (raw: Partial<PromptConfig>) => {
     const merged = mergeConfig({ ...configMirror, ...raw });
-    // 记录实际落盘值（apiKey 已 trim）：set 为异步 RPC，落盘后经 subscribe → refreshConfig
-    // 回声；与 lastSelfWrite 一致则不计入 configEpoch。此处不调用 refreshConfig()——
-    // 同步读到的仍是写入前的旧快照，镜像更新统一走 subscribe 回声路径。
     const written: PromptConfig = {
       baseUrl: merged.baseUrl,
       apiKey: merged.apiKey.trim(),
       model: merged.model,
     };
+    // pending 置目标（先于 set；目标=实际落盘值，apiKey 已 trim）：set 为异步逐字段 RPC，落盘后经
+    // subscribe → refreshConfig 回显；回显收敛前一律 classifyRefresh='in-progress'，不递增 configEpoch。
+    // 此处不调用 refreshConfig()——同步读到的仍是写入前的旧快照，镜像更新统一走 subscribe 回声路径。
+    pendingSelfBalance = written;
     settingsScope.set('baseUrl', written.baseUrl);
     settingsScope.set('apiKey', written.apiKey);
     settingsScope.set('model', written.model);
-    lastSelfWrite = written;
   };
   const resetConfig = () => {
-    const written: PromptConfig = {
-      baseUrl: DEFAULTS.baseUrl,
-      apiKey: DEFAULTS.apiKey,
-      model: DEFAULTS.model,
-    };
-    settingsScope.set('baseUrl', written.baseUrl);
-    settingsScope.set('apiKey', written.apiKey);
-    settingsScope.set('model', written.model);
-    lastSelfWrite = written;
+    // pending 置目标（先于 set）：恢复默认值的逐字段回显同样按收敛判定，不递增 configEpoch
+    pendingSelfBalance = { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model };
+    settingsScope.set('baseUrl', DEFAULTS.baseUrl);
+    settingsScope.set('apiKey', DEFAULTS.apiKey);
+    settingsScope.set('model', DEFAULTS.model);
   };
 
   ctx.inject(['slots'], (scope) => {
@@ -2070,7 +2071,7 @@ npm test
 - [ ] **Step 7: 提交**
 
 ```bash
-git add src/settings-form-state.ts src/settings-store.ts src/SettingsRow.tsx src/index.ts src/OptimizeButton.tsx tests/entry.ts dist/client.js
+git add src/settings-form-state.ts src/settings-store.ts src/settings-epoch.ts src/SettingsRow.tsx src/index.ts src/OptimizeButton.tsx tests/entry.ts dist/client.js
 git commit -m "feat: settings row with expandable API config form + Alt+O shortcut"
 ```
 
