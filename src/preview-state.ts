@@ -48,7 +48,7 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
   }
 }
 
-/** 是否允许发起新一轮优化：不在 optimizing 态即可（按钮/重试的并发把关） */
+/** 计划规定的公开 API（Task 4 起存在，当前由 OptimizeButton 的 canTrigger 承担等价职责；保留以备后续消费者） */
 export function canOptimizeFrom(status: PreviewStatus): boolean {
   return status !== 'optimizing';
 }

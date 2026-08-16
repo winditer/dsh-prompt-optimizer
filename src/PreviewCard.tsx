@@ -1,6 +1,6 @@
 /** 输入区浮层预览卡片：guide / optimizing / preview / error 四种内容态 */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { Lang, PromptConfig } from './optimizer.js';
 import type { OptimizerActions } from './optimizer-store.js';
 import { runOptimize } from './optimizer-store.js';
@@ -89,16 +89,8 @@ function injectCss() {
 
 function errorKey(kind: PreviewState['errorKind']): string {
   switch (kind) {
-    case 'unauthorized':
-    case 'forbidden':
-      return `error.${kind}`;
-    case 'timeout':
-    case 'network':
-    case 'cors':
-    case 'http':
-    case 'bad-response':
-    case 'empty':
-    case 'config':
+    // kind → locale key；'config' 在 UI 上不可达（runOptimize 先走 guide），AbortError→timeout 由 runOptimize 先行拦截，保留双保险
+    case 'unauthorized': case 'forbidden': case 'timeout': case 'network': case 'cors': case 'http': case 'bad-response': case 'empty': case 'config':
       return `error.${kind}`;
     default:
       return 'error.network';
@@ -110,11 +102,26 @@ export function PreviewCard(props: PreviewCardProps) {
 
   useEffect(() => injectCss(), []);
 
+  // 卸载时清理：清除挂起的 copied 复位定时器，并标记未挂载，
+  // 防止迟到的 setCopied(true)（copy 的 await 期间卸载）在卸载后触发。
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (copyTimerRef.current !== null) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const input = useInput();
   const status = useStore((s) => s.status);
   const result = useStore((s) => s.result);
   const errorKind = useStore((s) => s.errorKind);
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
 
   if (status === 'idle') return null;
 
@@ -128,12 +135,18 @@ export function PreviewCard(props: PreviewCardProps) {
   };
 
   const copy = async () => {
+    if (!navigator.clipboard) return; // 非安全上下文（http 等）：不翻转 copied，保持可重试
     try {
       await navigator.clipboard.writeText(result);
+      if (!mountedRef.current) return; // await 期间组件已卸载：不再 setState
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copyTimerRef.current = null;
+      }, 1200);
     } catch {
-      // 剪贴板不可用时静默
+      // 剪贴板写入失败：静默（不翻转 copied）
     }
   };
 

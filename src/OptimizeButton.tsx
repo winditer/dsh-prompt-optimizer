@@ -45,9 +45,6 @@ function injectCss() {
   opacity: 0.35;
   cursor: default;
 }
-.dsh-po-btn[data-busy="true"]::before {
-  content: "⏳";
-}
 `;
   document.head.appendChild(style);
 }

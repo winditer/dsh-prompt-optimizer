@@ -17,10 +17,9 @@ import {
 } from './optimizer.js';
 
 export interface OptimizerActions {
-  /** 进入 optimizing；已在优化中时返回 false（并发把关）。
-   *  注意：defineStore 的动作包装器丢弃 mutator 的返回值（运行时 `actions.begin()` 实际返回 undefined），
-   *  运行时并发把关由 runOptimize 内的模块级 activeController 承担（见 runOptimize）。 */
-  begin(): boolean;
+  /** 进入 optimizing。注意：defineStore 的包装丢弃 mutator 返回值（运行时 `actions.begin()` 为 undefined），
+   *  并发把关实际由 runOptimize 内的模块级 activeController 承担（见 runOptimize）。 */
+  begin(): void;
   show(result: string): void;
   fail(kind: OptimizeErrorKind): void;
   guide(): void;
@@ -48,17 +47,20 @@ export const createOptimizerStore: CreateOptimizerStore = () => {
     actions: {
       begin: (d: PreviewState) => {
         const next = reducePreview(d, { type: 'begin' });
-        if (next === d) return false;
+        // 已在 optimizing 时 reducer 返回原引用（immer 式 no-op），跳过写回
+        if (next === d) return;
         Object.assign(d, next);
-        return true;
       },
       show: (d: PreviewState, result: string) => Object.assign(d, reducePreview(d, { type: 'show', result })),
       fail: (d: PreviewState, kind: OptimizeErrorKind) => Object.assign(d, reducePreview(d, { type: 'fail', kind })),
       guide: (d: PreviewState) => Object.assign(d, reducePreview(d, { type: 'guide' })),
       close: (d: PreviewState) => {
-        // 卡片被关闭/放弃：若请求在途则取消，迟到的 show()/fail() 不得复活已关闭卡片
-        activeController?.abort();
-        activeController = null;
+        // 仅当本 store 处于 optimizing 时才取消在途请求：模块级 activeController 属于
+        // 正在优化的那个 store（模块级门防止第二个 store 进入 begin），其他会话关卡片不得误杀。
+        if (d.status === 'optimizing') {
+          activeController?.abort();
+          activeController = null;
+        }
         return Object.assign(d, reducePreview(d, { type: 'close' }));
       },
     },

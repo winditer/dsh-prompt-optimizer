@@ -969,7 +969,7 @@ git commit -m "feat: locales and pure state machines (preview, settings form) wi
 **Interfaces:**
 - Consumes: `reducePreview`/`INITIAL_PREVIEW`/`PreviewState`（`./preview-state.js`）、`optimize`/`checkConfig`/`optimize` 相关（`./optimizer.js`）、`NS`（`./locales.js`）、`PromptConfig`/`Lang`（`./optimizer.js`）
 - Produces:
-  - `interface OptimizerActions { begin(): boolean; show(result: string): void; fail(kind: OptimizeErrorKind): void; guide(): void; close(): void }`
+  - `interface OptimizerActions { begin(): void; show(result: string): void; fail(kind: OptimizeErrorKind): void; guide(): void; close(): void }`
   - `function createOptimizerStore(): StoreHandle`（defineStore；作为 `store:` 选项挂在两个会话槽位，per-session 共享实例）
   - `async function runOptimize(actions: OptimizerActions, ctx: { getConfig(): PromptConfig; getLang(): Lang; getDraft(): string }): Promise<void>`
   - `function langOf(active: string): Lang`（位于 `./locales.js`）
@@ -1029,6 +1029,8 @@ export function langOf(active: string): Lang {
 
 > `locales.ts` 需在顶部导入 `Lang` 类型：`import type { Lang } from './optimizer.js';`
 
+> 注（评审确认，下列实现以此为最终依据，不再按早期描述）：三处与原始计划的核实差异——(a) `export const inject` = `['slots','sessions','locale','settingsScope']`（Cordis 服务键；包 id 会使 fiber 永久 PENDING → web 启动审计失败，已对照 dsh-client-runtime/client.js defineStore 与 dsh-client-web assertEntriesActive 验证）；(b) runOptimize 并发门控用模块级 `activeController` 而非 `if (!actions.begin()) return;`（defineStore 包装丢弃 mutator 返回值，`begin()` 运行时为 undefined）；(c) CSS 类名 `dsh-po-*`、卡片槽位 id `prompt-optimizer-card`（Step 5/6 代码片段已按此更新）。
+
 - [ ] **Step 4: 实现 `src/optimizer-store.ts`**
 
 ```ts
@@ -1051,8 +1053,9 @@ import {
 } from './optimizer.js';
 
 export interface OptimizerActions {
-  /** 进入 optimizing；已在优化中时返回 false（并发把关） */
-  begin(): boolean;
+  /** 进入 optimizing。注意：defineStore 的包装丢弃 mutator 返回值（运行时 `actions.begin()` 为 undefined），
+   *  并发把关实际由 runOptimize 内的模块级 activeController 承担（见 runOptimize）。 */
+  begin(): void;
   show(result: string): void;
   fail(kind: OptimizeErrorKind): void;
   guide(): void;
@@ -1075,17 +1078,20 @@ export const createOptimizerStore: CreateOptimizerStore = () => {
     actions: {
       begin: (d: PreviewState) => {
         const next = reducePreview(d, { type: 'begin' });
-        if (next === d) return false;
+        // 已在 optimizing 时 reducer 返回原引用（immer 式 no-op），跳过写回
+        if (next === d) return;
         Object.assign(d, next);
-        return true;
       },
       show: (d: PreviewState, result: string) => Object.assign(d, reducePreview(d, { type: 'show', result })),
       fail: (d: PreviewState, kind: OptimizeErrorKind) => Object.assign(d, reducePreview(d, { type: 'fail', kind })),
       guide: (d: PreviewState) => Object.assign(d, reducePreview(d, { type: 'guide' })),
       close: (d: PreviewState) => {
-        // 卡片被关闭/放弃：若请求在途则取消，迟到的 show()/fail() 不得复活已关闭卡片
-        activeController?.abort();
-        activeController = null;
+        // 仅当本 store 处于 optimizing 时才取消在途请求：模块级 activeController 属于
+        // 正在优化的那个 store（模块级门防止第二个 store 进入 begin），其他会话关卡片不得误杀。
+        if (d.status === 'optimizing') {
+          activeController?.abort();
+          activeController = null;
+        }
         return Object.assign(d, reducePreview(d, { type: 'close' }));
       },
     },
@@ -1106,7 +1112,11 @@ export async function runOptimize(
   const draft = ctx.getDraft().trim();
   if (!draft) return;
 
-  if (!actions.begin()) return;
+  // 并发把关：已有在途请求则丢弃本次触发。
+  // 不能依赖 actions.begin() 的返回值——defineStore 动作包装器丢弃 mutator 返回值（恒为 undefined）；
+  // 组件层的按钮 busy 态已禁用点击，这里是对快捷键/竞态触发的最后防线。
+  if (activeController !== null) return;
+  actions.begin();
 
   const controller = new AbortController();
   activeController = controller; // 注册给 close()，供卡片关闭时取消在途请求
@@ -1137,7 +1147,7 @@ export async function runOptimize(
 }
 ```
 
-> 注（评审补充）：`INITIAL_PREVIEW` 为只读共享常量（reducer 永不写回它，`close` 直接返回它），store 的 `init` 必须返回 `{ ...INITIAL_PREVIEW }` 每会话副本，且 `close` 须经模块级 `activeController?.abort()` 取消在途请求——否则跨会话共享同一对象引用、迟到的 `show()` 会把已关闭卡片复活为 preview 态。
+> 注（评审补充）：`INITIAL_PREVIEW` 为只读共享常量（reducer 永不写回它，`close` 直接返回它），store 的 `init` 必须返回 `{ ...INITIAL_PREVIEW }` 每会话副本，且 `close` 须仅在**本 store 处于 optimizing 态**时经模块级 `activeController?.abort()` 取消在途请求（模块级门保证该 store 拥有此控制器）——否则跨会话共享同一对象引用、迟到的 `show()` 会把已关闭卡片复活为 preview 态、或误杀其他会话的在途请求。
 
 - [ ] **Step 5: 实现 `src/OptimizeButton.tsx`**
 
@@ -1171,7 +1181,7 @@ function injectCss() {
   const style = document.createElement('style');
   style.dataset.pluginCss = CSS_ID;
   style.textContent = `
-.optiBtn {
+.dsh-po-btn {
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -1181,16 +1191,13 @@ function injectCss() {
   opacity: 0.85;
   border-radius: 6px;
 }
-.optiBtn:hover:not(:disabled) {
+.dsh-po-btn:hover:not(:disabled) {
   opacity: 1;
   background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.12));
 }
-.optiBtn:disabled {
+.dsh-po-btn:disabled {
   opacity: 0.35;
   cursor: default;
-}
-.optiBtn[data-busy="true"]::before {
-  content: "⏳";
 }
 `;
   document.head.appendChild(style);
@@ -1220,7 +1227,7 @@ export function OptimizeButton(props: OptimizeButtonProps) {
   return (
     <button
       type="button"
-      className="optiBtn"
+      className="dsh-po-btn"
       aria-label={t('button.aria')}
       title={t('button.aria')}
       aria-busy={busy}
@@ -1267,7 +1274,7 @@ function injectCss() {
   const style = document.createElement('style');
   style.dataset.pluginCss = CSS_ID;
   style.textContent = `
-.optiCard {
+.dsh-po-card {
   position: absolute;
   left: 12px;
   right: 12px;
@@ -1283,7 +1290,7 @@ function injectCss() {
   flex-direction: column;
   gap: 8px;
 }
-.optiCardHead {
+.dsh-po-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1291,7 +1298,7 @@ function injectCss() {
   font-size: 13px;
   font-weight: 600;
 }
-.optiCardBody {
+.dsh-po-card-body {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1300,16 +1307,16 @@ function injectCss() {
   line-height: 1.6;
   max-height: 200px;
 }
-.optiCardErr {
+.dsh-po-card-err {
   color: var(--dsw-alias-state-error-primary, #d03050);
   font-size: 13px;
 }
-.optiCardRow {
+.dsh-po-card-row {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
-.optiBtn {
+.dsh-po-card-btn {
   border: 0;
   border-radius: 6px;
   padding: 4px 10px;
@@ -1318,7 +1325,7 @@ function injectCss() {
   color: var(--dsw-alias-label-primary, #222);
   background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.14));
 }
-.optiBtn.primary {
+.dsh-po-card-btn.primary {
   color: var(--dsw-alias-brand-primary-invert, #fff);
   background: var(--dsw-alias-brand-primary, #1677ff);
 }
@@ -1377,45 +1384,45 @@ export function PreviewCard(props: PreviewCardProps) {
   };
 
   return (
-    <div className="optiCard" role="status">
-      <div className="optiCardHead">
+    <div className="dsh-po-card" role="status">
+      <div className="dsh-po-card-head">
         <span>{t('card.title')}</span>
-        <button type="button" className="optiBtn" onClick={() => actions.close()}>
+        <button type="button" className="dsh-po-card-btn" onClick={() => actions.close()}>
           ✕
         </button>
       </div>
 
       {status === 'guide' && (
         <>
-          <div className="optiCardBody">{t('guide.title')}</div>
-          <div className="optiCardBody">{t('guide.desc')}</div>
-          <div className="optiCardRow">
-            <button type="button" className="optiBtn primary" onClick={() => { actions.close(); openSettings(); }}>
+          <div className="dsh-po-card-body">{t('guide.title')}</div>
+          <div className="dsh-po-card-body">{t('guide.desc')}</div>
+          <div className="dsh-po-card-row">
+            <button type="button" className="dsh-po-card-btn primary" onClick={() => { actions.close(); openSettings(); }}>
               {t('guide.action')}
             </button>
-            <button type="button" className="optiBtn" onClick={() => actions.close()}>
+            <button type="button" className="dsh-po-card-btn" onClick={() => actions.close()}>
               {t('guide.dismiss')}
             </button>
           </div>
         </>
       )}
 
-      {status === 'optimizing' && <div className="optiCardBody">{t('card.optimizing')}</div>}
+      {status === 'optimizing' && <div className="dsh-po-card-body">{t('card.optimizing')}</div>}
 
       {status === 'preview' && (
         <>
-          <div className="optiCardBody">{result}</div>
-          <div className="optiCardRow">
-            <button type="button" className="optiBtn primary" onClick={replace}>
+          <div className="dsh-po-card-body">{result}</div>
+          <div className="dsh-po-card-row">
+            <button type="button" className="dsh-po-card-btn primary" onClick={replace}>
               {t('card.replace')}
             </button>
-            <button type="button" className="optiBtn" onClick={() => void copy()}>
+            <button type="button" className="dsh-po-card-btn" onClick={() => void copy()}>
               {copied ? t('card.copyDone') : t('card.copy')}
             </button>
-            <button type="button" className="optiBtn" onClick={retry}>
+            <button type="button" className="dsh-po-card-btn" onClick={retry}>
               {t('card.retry')}
             </button>
-            <button type="button" className="optiBtn" onClick={() => actions.close()}>
+            <button type="button" className="dsh-po-card-btn" onClick={() => actions.close()}>
               {t('card.dismiss')}
             </button>
           </div>
@@ -1424,12 +1431,12 @@ export function PreviewCard(props: PreviewCardProps) {
 
       {status === 'error' && (
         <>
-          <div className="optiCardErr">{t(errorKey(errorKind))}</div>
-          <div className="optiCardRow">
-            <button type="button" className="optiBtn primary" onClick={retry}>
+          <div className="dsh-po-card-err">{t(errorKey(errorKind))}</div>
+          <div className="dsh-po-card-row">
+            <button type="button" className="dsh-po-card-btn primary" onClick={retry}>
               {t('card.retry')}
             </button>
-            <button type="button" className="optiBtn" onClick={() => actions.close()}>
+            <button type="button" className="dsh-po-card-btn" onClick={() => actions.close()}>
               {t('card.dismiss')}
             </button>
           </div>
@@ -1541,7 +1548,7 @@ export function apply(ctx: ClientContext) {
       scope.slots.register(
         {
           name: 'conversation.input.overlay',
-          id: 'prompt-optimizer-preview',
+          id: 'prompt-optimizer-card',
           order: 10,
           locale: NS,
           store: optimizerStore,
