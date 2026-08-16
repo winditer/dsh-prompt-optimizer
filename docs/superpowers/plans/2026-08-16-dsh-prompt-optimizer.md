@@ -415,7 +415,7 @@ function runOptimizerTests(check: (name: string, fn: () => void) => void) {
 
 - [ ] **Step 2: 在 `run()` 中接线并验证失败**
 
-`tests/entry.ts` 的 `run()` 中，`check('harness self-test', ...)` 之后插入：`runOptimizerTests(check);`，并修正 import。注意：Task 1 起 `run()` 已是 `async`（`check` 接受 `() => void | Promise<void>` 并 `await`），但 `check(...)` 调用模式不变——`runOptimizerTests(check)` 直接传函数引用即可，`runOptimizerTests` 内的 `check(...)` 无需 await（check 内部吞错并即时记录）。运行：
+`tests/entry.ts` 的 `run()` 中，`check('harness self-test', ...)` 之后插入：`runOptimizerTests(check);`，并修正 import。注意：Task 1 起 `run()` 已是 `async`（`check` 接受 `() => void | Promise<void>` 并 `await`），但 `check(...)` 调用模式不变——`runOptimizerTests(check)` 直接传函数引用即可；**同步 test fn 下 `check(...)` 无需 await；异步 test fn 必须 `await check(...)`（或让分组函数为 `async` 并逐条 await），否则失败记录在 `run()` 尾部检查之后才落盘，仍会出现假绿**。运行：
 
 ```bash
 npm test
