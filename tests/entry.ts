@@ -2,6 +2,9 @@
 
 import assert from 'node:assert';
 import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind } from '../src/optimizer.js';
+import { NS, zh, en } from '../src/locales.js';
+import { INITIAL_PREVIEW, reducePreview, type PreviewState } from '../src/preview-state.js';
+import { validateSettingsForm } from '../src/settings-form-state.js';
 
 async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
   await check('normalizeBaseUrl trims trailing slashes', () => {
@@ -220,6 +223,62 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
   });
 }
 
+async function runStateTests(check: (name: string, fn: () => void | Promise<void>) => void) {
+  await check('reducePreview begin → optimizing, generation bump, idempotent', () => {
+    const once = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
+    assert.strictEqual(once.status, 'optimizing');
+    assert.strictEqual(once.generation, 1);
+    const twice = reducePreview(once, { type: 'begin' });
+    assert.strictEqual(twice, once, 'double begin returns same reference');
+  });
+
+  await check('show/fail only apply while optimizing; close resets', () => {
+    const shown = reducePreview(reducePreview(INITIAL_PREVIEW, { type: 'begin' }), { type: 'show', result: 'R' });
+    assert.strictEqual(shown.status, 'preview');
+    assert.strictEqual(shown.result, 'R');
+    const failed = reducePreview(reducePreview(INITIAL_PREVIEW, { type: 'begin' }), { type: 'fail', kind: 'unauthorized' });
+    assert.strictEqual(failed.status, 'error');
+    assert.strictEqual(failed.errorKind, 'unauthorized');
+    // 未处于 optimizing 时 show/fail 被丢弃
+    assert.strictEqual(reducePreview(INITIAL_PREVIEW, { type: 'show', result: 'X' }), INITIAL_PREVIEW);
+    assert.strictEqual(reducePreview(INITIAL_PREVIEW, { type: 'fail', kind: 'http' }), INITIAL_PREVIEW);
+    assert.strictEqual(reducePreview(shown, { type: 'close' }), INITIAL_PREVIEW);
+  });
+
+  await check('guide transitions from any non-optimizing state', () => {
+    assert.strictEqual(reducePreview(INITIAL_PREVIEW, { type: 'guide' }).status, 'guide');
+    const fromError = reducePreview(
+      reducePreview(INITIAL_PREVIEW, { type: 'begin' }),
+      { type: 'fail', kind: 'http' },
+    );
+    assert.strictEqual(reducePreview(fromError, { type: 'guide' }).status, 'guide');
+  });
+
+  await check('validateSettingsForm', () => {
+    assert.deepStrictEqual(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: 'm' }), {});
+    assert.ok(validateSettingsForm({ baseUrl: '', apiKey: 'k', model: 'm' }).baseUrl);
+    assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: '', model: 'm' }).apiKey);
+    assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: '' }).model);
+    const bad = validateSettingsForm({ baseUrl: 'nonsense', apiKey: 'k', model: 'm' });
+    assert.ok(bad.baseUrl);
+  });
+}
+
+async function runLocaleTests(check: (name: string, fn: () => void | Promise<void>) => void) {
+  await check('NS value', () => {
+    assert.strictEqual(NS, 'prompt_optimizer');
+  });
+  await check('zh/en have identical key sets', () => {
+    const keys = (d: Record<string, unknown>) => Object.keys(d).sort();
+    assert.deepStrictEqual(keys(zh), keys(en));
+    assert.ok(keys(zh).length >= 15, `expected >=15 keys, got ${keys(zh).length}`);
+  });
+  await check('all values non-empty', () => {
+    for (const [k, v] of Object.entries(zh)) assert.ok(String(v).trim().length > 0, `zh.${k} empty`);
+    for (const [k, v] of Object.entries(en)) assert.ok(String(v).trim().length > 0, `en.${k} empty`);
+  });
+}
+
 export async function run(): Promise<boolean> {
   const results: string[] = [];
   const failures: string[] = [];
@@ -256,6 +315,9 @@ export async function run(): Promise<boolean> {
   });
 
   await runOptimizerTests(check);
+
+  await runStateTests(check);
+  await runLocaleTests(check);
 
   for (const r of results) console.log(r);
   if (failures.length > 0) {
