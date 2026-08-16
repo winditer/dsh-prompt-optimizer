@@ -2,8 +2,8 @@
 
 import assert from 'node:assert';
 import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind } from '../src/optimizer.js';
-import { NS, zh, en } from '../src/locales.js';
-import { INITIAL_PREVIEW, reducePreview } from '../src/preview-state.js';
+import { NS, zh, en, langOf } from '../src/locales.js';
+import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-state.js';
 import { validateSettingsForm } from '../src/settings-form-state.js';
 
 async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
@@ -321,6 +321,24 @@ async function runLocaleTests(check: (name: string, fn: () => void | Promise<voi
   });
 }
 
+async function runOptimizeStoreTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
+  await check('langOf maps zh variants and defaults to en', () => {
+    assert.strictEqual(langOf('zh'), 'zh');
+    assert.strictEqual(langOf('zh-Hans-CN'), 'zh');
+    assert.strictEqual(langOf('en'), 'en');
+    assert.strictEqual(langOf('fr'), 'en');
+    assert.strictEqual(langOf(''), 'en');
+  });
+
+  await check('canOptimizeFrom: idle/preview/error/guide allow, optimizing blocks', () => {
+    assert.strictEqual(canOptimizeFrom('idle'), true);
+    assert.strictEqual(canOptimizeFrom('preview'), true);
+    assert.strictEqual(canOptimizeFrom('error'), true);
+    assert.strictEqual(canOptimizeFrom('guide'), true);
+    assert.strictEqual(canOptimizeFrom('optimizing'), false);
+  });
+}
+
 export async function run(): Promise<boolean> {
   const results: string[] = [];
   const failures: string[] = [];
@@ -360,6 +378,7 @@ export async function run(): Promise<boolean> {
 
   await runStateTests(check);
   await runLocaleTests(check);
+  await runOptimizeStoreTests(check);
 
   for (const r of results) console.log(r);
   if (failures.length > 0) {

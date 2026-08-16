@@ -1,5 +1,7 @@
 /** Prompt 优化插件文案 — 中英双语 */
 
+import type { Lang } from './optimizer.js';
+
 export const NS = 'prompt_optimizer';
 
 export const zh = {
@@ -74,3 +76,8 @@ export const en: LocaleDict = {
 
 export type LocaleKey = keyof typeof zh;
 export type LocaleDict = { [K in LocaleKey]: string };
+
+/** 激活 locale → 界面语言（zh 前缀归 zh，其余归 en） */
+export function langOf(active: string): Lang {
+  return typeof active === 'string' && active.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}

@@ -47,3 +47,8 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
       return state;
   }
 }
+
+/** 是否允许发起新一轮优化：不在 optimizing 态即可（按钮/重试的并发把关） */
+export function canOptimizeFrom(status: PreviewStatus): boolean {
+  return status !== 'optimizing';
+}
