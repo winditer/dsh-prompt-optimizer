@@ -376,6 +376,23 @@ async function runSettingsStoreTests(check: (name: string, fn: () => void | Prom
     assert.strictEqual(stale, seeded, 'older revision must return same reference');
     assert.strictEqual(stale.values.baseUrl, 'https://a.com');
   });
+
+  await check('reduceSettingsForm: newer seed applies and advances revision', () => {
+    const seeded = reduceSettingsForm(INITIAL_SETTINGS_FORM, {
+      type: 'seed',
+      values: { baseUrl: 'https://a.com', apiKey: 'k', model: 'm' },
+      revision: 2,
+    });
+    const newer = reduceSettingsForm(seeded, {
+      type: 'seed',
+      values: { baseUrl: 'https://c.com', apiKey: 'z', model: 'n' },
+      revision: 3,
+    });
+    assert.notStrictEqual(newer, seeded, 'newer revision must apply (new reference)');
+    assert.strictEqual(newer.values.baseUrl, 'https://c.com');
+    assert.strictEqual(newer.values.apiKey, 'z');
+    assert.strictEqual(newer.revision, 3);
+  });
 }
 
 export async function run(): Promise<boolean> {

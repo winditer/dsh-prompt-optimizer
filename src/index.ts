@@ -14,6 +14,11 @@ import { createSettingsFormStore } from './settings-store.js';
 /** settings namespace（与插件 id 一致） */
 const SETTINGS_NS = 'prompt-optimizer';
 
+/** 配置三字段逐一相等（mergeConfig 产物已归一化，浅比较即可；用于自回声判定） */
+function configEquals(a: PromptConfig, b: PromptConfig): boolean {
+  return a.baseUrl === b.baseUrl && a.apiKey === b.apiKey && a.model === b.model;
+}
+
 /**
  * 声明插件依赖的客户端服务（cordis service keys）：apply 内经 `ctx.<service>` 访问的服务必须在此声明。
  * 值须为服务名而非包 id——与同形态先例一致（dsh-message-rail: ["slots","sessions"]；
@@ -31,8 +36,19 @@ export function apply(ctx: ClientContext) {
   // 2. 配置镜像（settingsScope 为唯一事实源）
   const settingsScope = ctx.settingsScope.bind({ namespace: SETTINGS_NS });
   let configMirror: PromptConfig = mergeConfig(undefined);
+  // 外部配置变化纪元：驱动设置表单的 seed 修订号（见 SettingsRow）——外部变化令纪元递增从而使表单重播种
+  let configEpoch = 0;
+  // 最近一次本地保存/重置的写入目标：用于区分 refreshConfig 的自回声（自身写入）与外部变化，
+  // 只有外部变化才递增 configEpoch，保证保存后的表单抑制不被自身写入的回声破坏
+  let lastSelfWrite: PromptConfig | null = null;
   const refreshConfig = () => {
-    configMirror = mergeConfig(settingsScope.getSnapshot().value);
+    const next = mergeConfig(settingsScope.getSnapshot().value);
+    // 自回声（next 与本地刚写入的目标一致）不计纪元；与目标不一致（或本无目标）的外部变化 → 纪元 +1
+    if (lastSelfWrite === null || !configEquals(next, lastSelfWrite)) {
+      configEpoch += 1;
+      lastSelfWrite = null;
+    }
+    configMirror = next;
   };
   refreshConfig();
   ctx.effect(
@@ -87,16 +103,30 @@ export function apply(ctx: ClientContext) {
   const settingsStore = createSettingsFormStore();
   const saveConfig = (raw: Partial<PromptConfig>) => {
     const merged = mergeConfig({ ...configMirror, ...raw });
-    settingsScope.set('baseUrl', merged.baseUrl);
-    settingsScope.set('apiKey', merged.apiKey.trim());
-    settingsScope.set('model', merged.model);
-    refreshConfig();
+    // 写入目标记录为实际落盘值（apiKey 已 trim）：settingsScope.set 为异步 RPC，落盘后经
+    // settingsScope.subscribe → refreshConfig 回声；与 lastSelfWrite 一致则不计入 configEpoch。
+    // 注意：此处不调用 refreshConfig()——同步读到的仍是写入前的旧快照（RPC 未落盘），
+    // 镜像更新统一走 subscribe 回声路径。
+    const written: PromptConfig = {
+      baseUrl: merged.baseUrl,
+      apiKey: merged.apiKey.trim(),
+      model: merged.model,
+    };
+    settingsScope.set('baseUrl', written.baseUrl);
+    settingsScope.set('apiKey', written.apiKey);
+    settingsScope.set('model', written.model);
+    lastSelfWrite = written;
   };
   const resetConfig = () => {
-    settingsScope.set('baseUrl', DEFAULTS.baseUrl);
-    settingsScope.set('apiKey', DEFAULTS.apiKey);
-    settingsScope.set('model', DEFAULTS.model);
-    refreshConfig();
+    const written: PromptConfig = {
+      baseUrl: DEFAULTS.baseUrl,
+      apiKey: DEFAULTS.apiKey,
+      model: DEFAULTS.model,
+    };
+    settingsScope.set('baseUrl', written.baseUrl);
+    settingsScope.set('apiKey', written.apiKey);
+    settingsScope.set('model', written.model);
+    lastSelfWrite = written;
   };
 
   ctx.inject(['slots'], (scope) => {
@@ -112,6 +142,7 @@ export function apply(ctx: ClientContext) {
             getConfig: () => configMirror,
             saveConfig,
             resetConfig,
+            getEpoch: () => configEpoch,
           }),
         },
         SettingsRow,

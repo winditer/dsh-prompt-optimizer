@@ -18,9 +18,18 @@ export interface SettingsFormActions {
   validate(values: SettingsFormValues): Record<string, string> | null;
 }
 
-export const createSettingsFormStore = (): unknown => {
+/** defineStore 返回的 store 句柄（同时可作类型占位，供注册时 `store:` 使用） */
+export interface SettingsFormStoreHandle {
+  // 运行时形状由 DSH 提供；此处仅为文档性类型
+}
+
+export const createSettingsFormStore = (): SettingsFormStoreHandle => {
   const handle = defineStore({
-    init: (): SettingsFormState => INITIAL_SETTINGS_FORM,
+    init: (): SettingsFormState => ({
+      // 每实例副本：INITIAL_SETTINGS_FORM 是只读共享常量，勿跨实例共享引用（reducer 的 draft 写入需受保护）
+      ...INITIAL_SETTINGS_FORM,
+      values: { ...INITIAL_SETTINGS_FORM.values },
+    }),
     actions: {
       seed: (d: SettingsFormState, values: SettingsFormValues, revision: number) =>
         Object.assign(d, reduceSettingsForm(d, { type: 'seed', values, revision })),
@@ -36,5 +45,5 @@ export const createSettingsFormStore = (): unknown => {
       },
     },
   });
-  return handle;
-};
+  return handle as SettingsFormStoreHandle;
+}

@@ -1703,9 +1703,18 @@ export interface SettingsFormActions {
   validate(values: SettingsFormValues): Record<string, string> | null;
 }
 
-export const createSettingsFormStore = (): unknown => {
+/** defineStore 返回的 store 句柄（同时可作类型占位，供注册时 `store:` 使用） */
+export interface SettingsFormStoreHandle {
+  // 运行时形状由 DSH 提供；此处仅为文档性类型
+}
+
+export const createSettingsFormStore = (): SettingsFormStoreHandle => {
   const handle = defineStore({
-    init: (): SettingsFormState => INITIAL_SETTINGS_FORM,
+    init: (): SettingsFormState => ({
+      // 每实例副本：INITIAL_SETTINGS_FORM 是只读共享常量，勿跨实例共享引用（reducer 的 draft 写入需受保护）
+      ...INITIAL_SETTINGS_FORM,
+      values: { ...INITIAL_SETTINGS_FORM.values },
+    }),
     actions: {
       seed: (d: SettingsFormState, values: SettingsFormValues, revision: number) =>
         Object.assign(d, reduceSettingsForm(d, { type: 'seed', values, revision })),
@@ -1721,7 +1730,7 @@ export const createSettingsFormStore = (): unknown => {
       },
     },
   });
-  return handle;
+  return handle as SettingsFormStoreHandle;
 };
 ```
 
@@ -1743,6 +1752,7 @@ export interface SettingsRowProps {
   getConfig: () => PromptConfig;
   saveConfig: (values: SettingsFormValues) => void;
   resetConfig: () => void;
+  getEpoch: () => number;
 }
 
 const CSS_ID = 'dsh-prompt-optimizer/settings.css';
@@ -1830,14 +1840,20 @@ export function SettingsRow(props: SettingsRowProps) {
   const config = getConfig();
   const modelLabel = config.model ? config.model : '—';
 
-  // 首次挂载 / 配置变化时把当前配置播种进表单
+  // 首次挂载 / 配置变化时把当前配置播种进表单。
+  // seed 修订号 = 本地提交序号 submitRevision + configEpoch（外部配置变化纪元）：
+  //  - 外部配置变化（跨标签页/外部写入 → index.ts refreshConfig 的纪元递增）令修订号超过
+  //    state.revision，重播种生效，表单跟上归一化后的镜像；
+  //  - 保存/重置已通过 commit/seed 写入「新本地序号 + 当时纪元」的修订号，紧接的本次效应
+  //    回跑（纪元未变）修订号相等被 reducer 抑制 → 保住用户原始输入与「已保存」提示；
+  //    下次本地动作（edit/commit）再把 state.revision 抬到与纪元一致。
   useEffect(() => {
     actions.seed(
       { baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model },
-      submitRevision,
+      submitRevision + getEpoch(),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.baseUrl, config.apiKey, config.model]);
+  }, [config.baseUrl, config.apiKey, config.model, getEpoch]);
 
   const handleSave = () => {
     const errors = actions.validate(values);
@@ -1847,14 +1863,15 @@ export function SettingsRow(props: SettingsRowProps) {
     }
     saveConfig(values);
     setSubmitRevision((r) => r + 1);
-    actions.commit(submitRevision + 1);
+    // 与效应回跑的 seed 修订号（新本地序号 + 纪元）对齐，使保存后的重播种被抑制
+    actions.commit(submitRevision + 1 + getEpoch());
   };
 
   const handleReset = () => {
     resetConfig();
     actions.seed(
       { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model },
-      submitRevision + 1,
+      submitRevision + 1 + getEpoch(),
     );
     setSubmitRevision((r) => r + 1);
   };
@@ -1920,26 +1937,57 @@ export function SettingsRow(props: SettingsRowProps) {
 ```
 
 > 注（评审补充）：表单校验已与 `checkConfig` 对齐（baseUrl 拒绝 query/hash）。
+>
+> 注（Task 5 评审补充）：表单 seed 修订号 = 本地提交序号 + configEpoch（外部配置变化（跨标签页/外部写入）经 epoch 重播种；保存后的抑制仍由本地序号守卫）。
 
 - [ ] **Step 5: `src/index.ts` 追加设置行注册与快捷键**
 
-在 `apply()` 中、会话槽位注册之后追加（`src/index.ts` 编辑）：
+在 `apply()` 中、会话槽位注册之后追加（`src/index.ts` 编辑）；并在 `apply()` 的配置镜像区（Task 3 所建）追加外部配置变化纪元：
+
+```ts
+  // 2.（Task 3 配置镜像区追加）外部配置变化纪元：驱动设置表单的 seed 修订号（见 Step 4/5 注）
+  let configEpoch = 0;
+  // 最近一次本地保存/重置的写入目标：区分 refreshConfig 的自回声（自身写入）与外部变化，
+  // 只有外部变化才递增 configEpoch，保证保存后的表单抑制不被自身写入的回声破坏
+  let lastSelfWrite: PromptConfig | null = null;
+  const refreshConfig = () => {
+    const next = mergeConfig(settingsScope.getSnapshot().value);
+    if (lastSelfWrite === null || !configEquals(next, lastSelfWrite)) {
+      configEpoch += 1; // 外部配置变化 → 纪元 +1，设置表单据此重播种
+      lastSelfWrite = null;
+    }
+    configMirror = next;
+  };
+```
 
 ```ts
   // 6. 设置行（root 作用域）
   const settingsStore = createSettingsFormStore();
   const saveConfig = (raw: Partial<PromptConfig>) => {
     const merged = mergeConfig({ ...configMirror, ...raw });
-    settingsScope.set('baseUrl', merged.baseUrl);
-    settingsScope.set('apiKey', merged.apiKey.trim());
-    settingsScope.set('model', merged.model);
-    refreshConfig();
+    // 记录实际落盘值（apiKey 已 trim）：set 为异步 RPC，落盘后经 subscribe → refreshConfig
+    // 回声；与 lastSelfWrite 一致则不计入 configEpoch。此处不调用 refreshConfig()——
+    // 同步读到的仍是写入前的旧快照，镜像更新统一走 subscribe 回声路径。
+    const written: PromptConfig = {
+      baseUrl: merged.baseUrl,
+      apiKey: merged.apiKey.trim(),
+      model: merged.model,
+    };
+    settingsScope.set('baseUrl', written.baseUrl);
+    settingsScope.set('apiKey', written.apiKey);
+    settingsScope.set('model', written.model);
+    lastSelfWrite = written;
   };
   const resetConfig = () => {
-    settingsScope.set('baseUrl', DEFAULTS.baseUrl);
-    settingsScope.set('apiKey', DEFAULTS.apiKey);
-    settingsScope.set('model', DEFAULTS.model);
-    refreshConfig();
+    const written: PromptConfig = {
+      baseUrl: DEFAULTS.baseUrl,
+      apiKey: DEFAULTS.apiKey,
+      model: DEFAULTS.model,
+    };
+    settingsScope.set('baseUrl', written.baseUrl);
+    settingsScope.set('apiKey', written.apiKey);
+    settingsScope.set('model', written.model);
+    lastSelfWrite = written;
   };
 
   ctx.inject(['slots'], (scope) => {
@@ -1955,6 +2003,7 @@ export function SettingsRow(props: SettingsRowProps) {
             getConfig: () => configMirror,
             saveConfig,
             resetConfig,
+            getEpoch: () => configEpoch,
           }),
         },
         SettingsRow,

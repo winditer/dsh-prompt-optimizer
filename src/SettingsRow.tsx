@@ -14,6 +14,7 @@ export interface SettingsRowProps {
   getConfig: () => PromptConfig;
   saveConfig: (values: SettingsFormValues) => void;
   resetConfig: () => void;
+  getEpoch: () => number;
 }
 
 const CSS_ID = 'dsh-prompt-optimizer/settings.css';
@@ -88,7 +89,7 @@ function injectCss() {
 }
 
 export function SettingsRow(props: SettingsRowProps) {
-  const { t, useStore, actions, getConfig, saveConfig, resetConfig } = props;
+  const { t, useStore, actions, getConfig, saveConfig, resetConfig, getEpoch } = props;
   const [expanded, setExpanded] = useState(false);
   const [submitRevision, setSubmitRevision] = useState(0);
 
@@ -101,14 +102,20 @@ export function SettingsRow(props: SettingsRowProps) {
   const config = getConfig();
   const modelLabel = config.model ? config.model : '—';
 
-  // 首次挂载 / 配置变化时把当前配置播种进表单
+  // 首次挂载 / 配置变化时把当前配置播种进表单。
+  // seed 修订号 = 本地提交序号 submitRevision + configEpoch（外部配置变化纪元）：
+  //  - 外部配置变化（跨标签页/外部写入 → index.ts refreshConfig 的纪元递增）令修订号超过
+  //    state.revision，重播种生效，表单跟上归一化后的镜像；
+  //  - 保存/重置已通过 commit/seed 写入「新本地序号 + 当时纪元」的修订号，紧接的本次效应
+  //    回跑（纪元未变）修订号相等被 reducer 抑制 → 保住用户原始输入与「已保存」提示；
+  //    下次本地动作（edit/commit）再把 state.revision 抬到与纪元一致。
   useEffect(() => {
     actions.seed(
       { baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model },
-      submitRevision,
+      submitRevision + getEpoch(),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.baseUrl, config.apiKey, config.model]);
+  }, [config.baseUrl, config.apiKey, config.model, getEpoch]);
 
   // 「去设置」（预览卡未配置引导）→ 自动展开表单
   useEffect(() => onOpenSettingsRequest(() => setExpanded(true)), []);
@@ -121,14 +128,15 @@ export function SettingsRow(props: SettingsRowProps) {
     }
     saveConfig(values);
     setSubmitRevision((r) => r + 1);
-    actions.commit(submitRevision + 1);
+    // 与效应回跑的 seed 修订号（新本地序号 + 纪元）对齐，使保存后的重播种被抑制
+    actions.commit(submitRevision + 1 + getEpoch());
   };
 
   const handleReset = () => {
     resetConfig();
     actions.seed(
       { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model },
-      submitRevision + 1,
+      submitRevision + 1 + getEpoch(),
     );
     setSubmitRevision((r) => r + 1);
   };
