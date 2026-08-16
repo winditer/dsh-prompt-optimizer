@@ -1,11 +1,12 @@
 /** 输入栏右侧「优化」按钮 */
 
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import type { Lang, PromptConfig } from './optimizer.js';
 import { canTrigger } from './optimizer.js';
 import type { OptimizerActions } from './optimizer-store.js';
 import { runOptimize } from './optimizer-store.js';
 import type { PreviewState } from './preview-state.js';
+import { onOptimizeRequest } from './events.js';
 
 /** 会话标准 kit 提供的只读输入快照（input hook） */
 interface InputSnapshot {
@@ -61,14 +62,18 @@ export function OptimizeButton(props: OptimizeButtonProps) {
   // 会话 scope 清理（或冻结），runOptimize 的迟到写入无人订阅，无副作用。
   useEffect(() => injectCss(), []);
 
-  const handleClick = () => {
+  const handleClick = useCallback(() => {
     if (disabled) return;
     void runOptimize(actions, {
       getConfig,
       getLang,
       getDraft: () => input.draft,
     });
-  };
+  }, [disabled, actions, getConfig, getLang, input.draft]);
+
+  // Alt+O 快捷键（index.ts 全局监听）→ 等效点击按钮；
+  // handleClick 随依赖变化重建，订阅始终指向最新闭包（含最新 draft/disabled）。
+  useEffect(() => onOptimizeRequest(handleClick), [handleClick]);
 
   return (
     <button

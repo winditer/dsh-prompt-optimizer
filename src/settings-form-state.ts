@@ -27,3 +27,40 @@ export function validateSettingsForm(values: SettingsFormValues): Record<string,
 
   return errors;
 }
+
+export interface SettingsFormState {
+  values: SettingsFormValues;
+  dirty: boolean;
+  saved: boolean;
+  error: string | null;
+  revision: number;
+}
+
+export const INITIAL_SETTINGS_FORM: SettingsFormState = {
+  values: { baseUrl: '', apiKey: '', model: '' },
+  dirty: false,
+  saved: false,
+  error: null,
+  revision: -1,
+};
+
+export type SettingsFormAction =
+  | { type: 'seed'; values: SettingsFormValues; revision: number }
+  | { type: 'edit'; field: keyof SettingsFormValues; value: string }
+  | { type: 'commit'; revision: number }
+  | { type: 'fail'; message: string };
+
+export function reduceSettingsForm(state: SettingsFormState, action: SettingsFormAction): SettingsFormState {
+  switch (action.type) {
+    case 'seed':
+      return action.revision <= state.revision
+        ? state
+        : { ...state, values: { ...action.values }, dirty: false, saved: false, error: null, revision: action.revision };
+    case 'edit':
+      return { ...state, values: { ...state.values, [action.field]: action.value }, dirty: true, saved: false, error: null };
+    case 'commit':
+      return { ...state, dirty: false, saved: true, error: null, revision: action.revision };
+    case 'fail':
+      return { ...state, error: action.message };
+  }
+}

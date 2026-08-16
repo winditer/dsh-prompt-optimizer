@@ -1,0 +1,193 @@
+/** 设置 → General 区「Prompt 优化」设置行：标题摘要 + 展开表单 */
+
+import React, { useEffect, useState } from 'react';
+import type { PromptConfig } from './optimizer.js';
+import { DEFAULTS } from './optimizer.js';
+import type { SettingsFormState, SettingsFormValues } from './settings-form-state.js';
+import type { SettingsFormActions } from './settings-store.js';
+import { onOpenSettingsRequest } from './events.js';
+
+export interface SettingsRowProps {
+  t: (key: string) => string;
+  useStore: <T>(selector: (s: SettingsFormState) => T) => T;
+  actions: SettingsFormActions;
+  getConfig: () => PromptConfig;
+  saveConfig: (values: SettingsFormValues) => void;
+  resetConfig: () => void;
+}
+
+const CSS_ID = 'dsh-prompt-optimizer/settings.css';
+function injectCss() {
+  if (typeof document === 'undefined' || document.querySelector(`style[data-plugin-css="${CSS_ID}"]`)) return;
+  const style = document.createElement('style');
+  style.dataset.pluginCss = CSS_ID;
+  style.textContent = `
+.optiSettings {
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.optiSettingsTitle {
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+}
+.optiSettingsHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+.optiSettingsForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.optiSettingsField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.optiSettingsLabel {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.optiSettingsInput {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.optiSettingsRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.optiSettingsBtn {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.14));
+  color: var(--dsw-alias-label-primary);
+}
+.optiSettingsBtn.primary {
+  color: var(--dsw-alias-brand-primary-invert, #fff);
+  background: var(--dsw-alias-brand-primary, #1677ff);
+}
+.optiSettingsErr {
+  color: var(--dsw-alias-state-error-primary, #d03050);
+  font-size: 12px;
+}
+`;
+  document.head.appendChild(style);
+}
+
+export function SettingsRow(props: SettingsRowProps) {
+  const { t, useStore, actions, getConfig, saveConfig, resetConfig } = props;
+  const [expanded, setExpanded] = useState(false);
+  const [submitRevision, setSubmitRevision] = useState(0);
+
+  const values = useStore((s) => s.values);
+  const saved = useStore((s) => s.saved);
+  const error = useStore((s) => s.error);
+
+  useEffect(() => injectCss(), []);
+
+  const config = getConfig();
+  const modelLabel = config.model ? config.model : '—';
+
+  // 首次挂载 / 配置变化时把当前配置播种进表单
+  useEffect(() => {
+    actions.seed(
+      { baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model },
+      submitRevision,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.baseUrl, config.apiKey, config.model]);
+
+  // 「去设置」（预览卡未配置引导）→ 自动展开表单
+  useEffect(() => onOpenSettingsRequest(() => setExpanded(true)), []);
+
+  const handleSave = () => {
+    const errors = actions.validate(values);
+    if (errors) {
+      actions.fail(Object.values(errors)[0]);
+      return;
+    }
+    saveConfig(values);
+    setSubmitRevision((r) => r + 1);
+    actions.commit(submitRevision + 1);
+  };
+
+  const handleReset = () => {
+    resetConfig();
+    actions.seed(
+      { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model },
+      submitRevision + 1,
+    );
+    setSubmitRevision((r) => r + 1);
+  };
+
+  return (
+    <div className="optiSettings">
+      <div className="optiSettingsTitle" onClick={() => setExpanded((v) => !v)} style={{ cursor: 'pointer' }}>
+        {t('settings.title')}
+        {!expanded && <span className="optiSettingsHint"> · {t(config.apiKey ? 'card.configured.hint' : 'card.unconfigured.hint').replace('{model}', modelLabel)}</span>}
+      </div>
+      {!expanded && <div className="optiSettingsHint">{t('settings.clickToEdit')}</div>}
+
+      {expanded && (
+        <div className="optiSettingsForm">
+          <div className="optiSettingsField">
+            <label className="optiSettingsLabel" htmlFor="opti-base-url">{t('settings.baseUrl')}</label>
+            <input
+              id="opti-base-url"
+              className="optiSettingsInput"
+              value={values.baseUrl}
+              placeholder={DEFAULTS.baseUrl}
+              onChange={(e) => actions.edit('baseUrl', e.target.value)}
+            />
+          </div>
+          <div className="optiSettingsField">
+            <label className="optiSettingsLabel" htmlFor="opti-api-key">{t('settings.apiKey')}</label>
+            <input
+              id="opti-api-key"
+              className="optiSettingsInput"
+              type="password"
+              value={values.apiKey}
+              placeholder="sk-…"
+              autoComplete="off"
+              onChange={(e) => actions.edit('apiKey', e.target.value)}
+            />
+          </div>
+          <div className="optiSettingsField">
+            <label className="optiSettingsLabel" htmlFor="opti-model">{t('settings.model')}</label>
+            <input
+              id="opti-model"
+              className="optiSettingsInput"
+              value={values.model}
+              placeholder={DEFAULTS.model}
+              onChange={(e) => actions.edit('model', e.target.value)}
+            />
+          </div>
+          <div className="optiSettingsRow">
+            <button type="button" className="optiSettingsBtn primary" onClick={handleSave}>
+              {t('settings.save')}
+            </button>
+            <button type="button" className="optiSettingsBtn" onClick={handleReset}>
+              {t('settings.reset')}
+            </button>
+            {saved && <span className="optiSettingsHint">{t('settings.saved')}</span>}
+            {error && <span className="optiSettingsErr">{t(error)}</span>}
+          </div>
+          <div className="optiSettingsHint">{t('settings.desc')}</div>
+        </div>
+      )}
+    </div>
+  );
+}

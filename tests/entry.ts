@@ -5,6 +5,7 @@ import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt
 import { NS, zh, en, langOf } from '../src/locales.js';
 import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-state.js';
 import { validateSettingsForm } from '../src/settings-form-state.js';
+import { INITIAL_SETTINGS_FORM, reduceSettingsForm } from '../src/settings-form-state.js';
 
 async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
   await check('normalizeBaseUrl trims trailing slashes', () => {
@@ -339,6 +340,44 @@ async function runOptimizeStoreTests(check: (name: string, fn: () => void | Prom
   });
 }
 
+async function runSettingsStoreTests(check: (name: string, fn: () => void | Promise<void>) => void) {
+  await check('reduceSettingsForm: seed, edit, commit, fail', () => {
+    const seeded = reduceSettingsForm(INITIAL_SETTINGS_FORM, {
+      type: 'seed',
+      values: { baseUrl: 'https://a.com', apiKey: 'k', model: 'm' },
+      revision: 1,
+    });
+    assert.strictEqual(seeded.values.baseUrl, 'https://a.com');
+    assert.strictEqual(seeded.dirty, false);
+
+    const edited = reduceSettingsForm(seeded, { type: 'edit', field: 'model', value: 'm2' });
+    assert.strictEqual(edited.dirty, true);
+    assert.strictEqual(edited.values.model, 'm2');
+
+    const committed = reduceSettingsForm(edited, { type: 'commit', revision: 2 });
+    assert.strictEqual(committed.dirty, false);
+    assert.strictEqual(committed.saved, true);
+
+    const failed = reduceSettingsForm(edited, { type: 'fail', message: 'boom' });
+    assert.strictEqual(failed.error, 'boom');
+  });
+
+  await check('reduceSettingsForm: stale seed ignored, edit keeps dirty', () => {
+    const seeded = reduceSettingsForm(INITIAL_SETTINGS_FORM, {
+      type: 'seed',
+      values: { baseUrl: 'https://a.com', apiKey: 'k', model: 'm' },
+      revision: 2,
+    });
+    const stale = reduceSettingsForm(seeded, {
+      type: 'seed',
+      values: { baseUrl: 'https://b.com', apiKey: 'x', model: 'y' },
+      revision: 1,
+    });
+    assert.strictEqual(stale, seeded, 'older revision must return same reference');
+    assert.strictEqual(stale.values.baseUrl, 'https://a.com');
+  });
+}
+
 export async function run(): Promise<boolean> {
   const results: string[] = [];
   const failures: string[] = [];
@@ -379,6 +418,7 @@ export async function run(): Promise<boolean> {
   await runStateTests(check);
   await runLocaleTests(check);
   await runOptimizeStoreTests(check);
+  await runSettingsStoreTests(check);
 
   for (const r of results) console.log(r);
   if (failures.length > 0) {
