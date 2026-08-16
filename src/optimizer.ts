@@ -34,6 +34,7 @@ export function checkConfig(config: PromptConfig): ConfigCheck {
   try {
     const u = new URL(normalizeBaseUrl(config.baseUrl));
     if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('protocol');
+    if (u.search || u.hash) throw new Error('query-or-hash');
   } catch {
     return { ok: false, reason: 'bad-url' };
   }
@@ -70,7 +71,7 @@ export function buildRequestBody(config: PromptConfig, text: string, lang: Lang)
 
 export function extractResult(raw: string): string {
   let s = raw.trim();
-  const fence = /^```[a-zA-Z0-9_+-]*\n?([\s\S]*?)\n?```$/;
+  const fence = /^```[a-zA-Z0-9_+-]*\n([\s\S]*?)\n?```$/;
   const matched = s.match(fence);
   if (matched) s = matched[1].trim();
   return s;
@@ -114,9 +115,13 @@ function extractChoiceContent(payload: unknown): string | null {
 
 export function toErrorKind(e: unknown): OptimizeError {
   if (e instanceof OptimizeError) return e;
-  if (e instanceof DOMException && e.name === 'AbortError') return new OptimizeError('timeout', 'request aborted');
+  const isAbort =
+    (typeof DOMException !== 'undefined' && e instanceof DOMException && e.name === 'AbortError') ||
+    (e instanceof Error && (e as Error).name === 'AbortError');
+  if (isAbort) return new OptimizeError('timeout', 'request aborted');
   if (e instanceof TypeError) {
     const m = String(e.message ?? '');
+    // 尽力而为：Chromium 的 CORS 失败通常是 TypeError("Failed to fetch")（无 cors 字样），会落到 network；此分支仅捕获自带 CORS 字样的错误。
     if (/cors/i.test(m)) return new OptimizeError('cors', m);
     return new OptimizeError('network', m || 'network error');
   }

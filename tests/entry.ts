@@ -30,6 +30,13 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
     assert.strictEqual(ok.ok, true);
   });
 
+  await check('checkConfig rejects baseUrl with query/hash', () => {
+    assert.strictEqual(checkConfig({ ...DEFAULTS, apiKey: 'k', baseUrl: 'https://x.y?a=1' }).ok, false);
+    assert.strictEqual(checkConfig({ ...DEFAULTS, apiKey: 'k', baseUrl: 'https://x.y#frag' }).ok, false);
+    const clean = checkConfig({ ...DEFAULTS, apiKey: 'k', baseUrl: 'https://x.y' });
+    assert.strictEqual(clean.ok, true);
+  });
+
   await check('buildSystemPrompt zh/en non-empty and distinct', () => {
     assert.ok(buildSystemPrompt('zh').length > 40);
     assert.ok(buildSystemPrompt('en').length > 40);
@@ -51,6 +58,14 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
     assert.strictEqual(extractResult('```\n优化后正文\n```'), '优化后正文');
     assert.strictEqual(extractResult('```markdown\nA\nB\n```'), 'A\nB');
     assert.strictEqual(extractResult('```\n```'), '');
+  });
+
+  await check('extractResult preserves 4-backtick fences (no corruption)', () => {
+    assert.strictEqual(extractResult('````\nfoo\n````'), '````\nfoo\n````');
+  });
+
+  await check('extractResult unwraps tagged fence without trailing newline', () => {
+    assert.strictEqual(extractResult('```json\n{"a":1}```'), '{"a":1}');
   });
 
   await check('canTrigger', () => {
@@ -103,6 +118,105 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
     assert.strictEqual(toErrorKind(new TypeError('Failed to fetch')).kind, 'network');
     assert.strictEqual(toErrorKind(new OptimizeError('timeout', 't')).kind, 'timeout');
     assert.strictEqual(toErrorKind(new Error('boom')).kind, 'network');
+  });
+
+  await check('toErrorKind maps CORS TypeError to cors', () => {
+    assert.strictEqual(toErrorKind(new TypeError('Failed to fetch: CORS policy blocks...')).kind, 'cors');
+  });
+
+  await check('optimize 403 → forbidden', async () => {
+    const original = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = async () => new Response('{}', { status: 403 });
+    try {
+      await assert.rejects(
+        optimize({ config: { ...DEFAULTS, apiKey: 'k' }, text: 'd', lang: 'en' }),
+        (e: unknown) => e instanceof OptimizeError && e.kind === 'forbidden',
+      );
+    } finally {
+      (globalThis as { fetch: unknown }).fetch = original;
+    }
+  });
+
+  await check('optimize 500 → http', async () => {
+    const original = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = async () => new Response('oops', { status: 500 });
+    try {
+      await assert.rejects(
+        optimize({ config: { ...DEFAULTS, apiKey: 'k' }, text: 'd', lang: 'en' }),
+        (e: unknown) => e instanceof OptimizeError && e.kind === 'http',
+      );
+    } finally {
+      (globalThis as { fetch: unknown }).fetch = original;
+    }
+  });
+
+  await check('optimize 200 invalid JSON → bad-response', async () => {
+    const original = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = async () => new Response('not json', { status: 200 });
+    try {
+      await assert.rejects(
+        optimize({ config: { ...DEFAULTS, apiKey: 'k' }, text: 'd', lang: 'zh' }),
+        (e: unknown) => e instanceof OptimizeError && e.kind === 'bad-response',
+      );
+    } finally {
+      (globalThis as { fetch: unknown }).fetch = original;
+    }
+  });
+
+  await check('optimize 200 empty choices → empty', async () => {
+    const original = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = async () =>
+      new Response(JSON.stringify({ choices: [] }), { status: 200 });
+    try {
+      await assert.rejects(
+        optimize({ config: { ...DEFAULTS, apiKey: 'k' }, text: 'd', lang: 'zh' }),
+        (e: unknown) => e instanceof OptimizeError && e.kind === 'empty',
+      );
+    } finally {
+      (globalThis as { fetch: unknown }).fetch = original;
+    }
+  });
+
+  await check('optimize 200 non-string content → empty', async () => {
+    const original = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: 42 } }] }), { status: 200 });
+    try {
+      await assert.rejects(
+        optimize({ config: { ...DEFAULTS, apiKey: 'k' }, text: 'd', lang: 'zh' }),
+        (e: unknown) => e instanceof OptimizeError && e.kind === 'empty',
+      );
+    } finally {
+      (globalThis as { fetch: unknown }).fetch = original;
+    }
+  });
+
+  await check('optimize aborted signal → timeout', async () => {
+    const original = globalThis.fetch;
+    const ac = new AbortController();
+    ac.abort();
+    // 永不 resolve 的 stub：仅当 signal 中止时 reject（AbortError），让 optimize 的 catch 落 toErrorKind → timeout
+    (globalThis as { fetch: unknown }).fetch = (_url: unknown, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) reject(new DOMException('aborted', 'AbortError'));
+        else signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    try {
+      await assert.rejects(
+        optimize({ config: { ...DEFAULTS, apiKey: 'k' }, text: 'd', lang: 'zh', signal: ac.signal }),
+        (e: unknown) => e instanceof OptimizeError && e.kind === 'timeout',
+      );
+    } finally {
+      (globalThis as { fetch: unknown }).fetch = original;
+    }
+  });
+
+  await check('optimize invalid config (empty apiKey) → config', async () => {
+    await assert.rejects(
+      optimize({ config: { ...DEFAULTS, apiKey: '' }, text: 'd', lang: 'zh' }),
+      (e: unknown) => e instanceof OptimizeError && e.kind === 'config',
+    );
   });
 }
 

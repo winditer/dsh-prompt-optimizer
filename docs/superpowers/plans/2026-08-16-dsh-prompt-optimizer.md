@@ -309,8 +309,8 @@ git commit -m "feat: scaffold prompt-optimizer plugin (build, tests, metadata)"
 ```ts
 import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind } from '../src/optimizer.js';
 
-function runOptimizerTests(check: (name: string, fn: () => void) => void) {
-  check('normalizeBaseUrl trims trailing slashes', () => {
+async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void) {
+  await check('normalizeBaseUrl trims trailing slashes', () => {
     assert.strictEqual(normalizeBaseUrl('https://api.deepseek.com/'), 'https://api.deepseek.com');
     assert.strictEqual(normalizeBaseUrl('https://api.deepseek.com///'), 'https://api.deepseek.com');
     assert.strictEqual(normalizeBaseUrl(' https://x.y '), 'https://x.y');
@@ -462,6 +462,7 @@ export function checkConfig(config: PromptConfig): ConfigCheck {
   try {
     const u = new URL(normalizeBaseUrl(config.baseUrl));
     if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('protocol');
+    if (u.search || u.hash) throw new Error('query-or-hash');
   } catch {
     return { ok: false, reason: 'bad-url' };
   }
@@ -498,7 +499,7 @@ export function buildRequestBody(config: PromptConfig, text: string, lang: Lang)
 
 export function extractResult(raw: string): string {
   let s = raw.trim();
-  const fence = /^```[a-zA-Z0-9_+-]*\n([\s\S]*?)\n```$/;
+  const fence = /^```[a-zA-Z0-9_+-]*\n([\s\S]*?)\n?```$/;
   const matched = s.match(fence);
   if (matched) s = matched[1].trim();
   return s;
@@ -542,7 +543,10 @@ function extractChoiceContent(payload: unknown): string | null {
 
 export function toErrorKind(e: unknown): OptimizeError {
   if (e instanceof OptimizeError) return e;
-  if (e instanceof DOMException && e.name === 'AbortError') return new OptimizeError('timeout', 'request aborted');
+  const isAbort =
+    (typeof DOMException !== 'undefined' && e instanceof DOMException && e.name === 'AbortError') ||
+    (e instanceof Error && (e as Error).name === 'AbortError');
+  if (isAbort) return new OptimizeError('timeout', 'request aborted');
   if (e instanceof TypeError) {
     const m = String(e.message ?? '');
     if (/cors/i.test(m)) return new OptimizeError('cors', m);
@@ -587,7 +591,7 @@ export async function optimize(opts: {
     throw new OptimizeError('bad-response', 'invalid JSON');
   }
   const content = extractChoiceContent(payload);
-  if (!content) throw new OptimizeError('empty', 'empty completion');
+  if (!content || !content.trim()) throw new OptimizeError('empty', 'empty completion');
   return extractResult(content);
 }
 ```
@@ -1863,7 +1867,7 @@ export function SettingsRow(props: SettingsRowProps) {
   const saveConfig = (raw: Partial<PromptConfig>) => {
     const merged = mergeConfig({ ...configMirror, ...raw });
     settingsScope.set('baseUrl', merged.baseUrl);
-    settingsScope.set('apiKey', merged.apiKey);
+    settingsScope.set('apiKey', merged.apiKey.trim());
     settingsScope.set('model', merged.model);
     refreshConfig();
   };
@@ -1938,6 +1942,8 @@ import { SettingsRow } from './SettingsRow.tsx';
 ```
 
 > 注：`signal`（Task 4 定义）当前仅作为「去设置」的轻量通知通道；设置行自动展开联动在本次交付中简化——「去设置」点击 = 关闭引导卡 + 触发信号（信号暂无订阅方，为后续设置页导航保留）。这符合 spec「引导 + 去设置」的文案与交互（用户随后自行到设置页展开）。
+
+> 注（Task 2 评审补充）：保存配置时对 `apiKey` 做 `trim()`——`mergeConfig` 刻意保留 apiKey 原样（其测试断言 `' k '` 不变），`checkConfig` 用 `apiKey.trim()` 校验，若原样保存会在 `Authorization: Bearer  k ` 中夹带空格导致 401；由本任务保存层负责清理。在 `saveConfig` 中写入前对 `raw.apiKey` 执行 `raw.apiKey.trim()`。
 
 - [ ] **Step 6: 构建 + 测试验证**
 
