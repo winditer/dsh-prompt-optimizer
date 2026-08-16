@@ -1,4 +1,4 @@
-/** 单测运行器：esbuild 打包 tests/entry.ts → node 执行 → 按出口 `run()` 返回码退出 */
+/** 单测运行器：esbuild 打包 tests/entry.ts → node 执行 → 按 run() 返回值设置退出码 */
 
 import { build } from 'esbuild';
 import { mkdirSync } from 'node:fs';
@@ -23,4 +23,5 @@ await build({
 });
 
 const { run } = await import(outFile);
-process.exit(run() ? 0 : 1);
+const ok = await run();
+process.exitCode = ok ? 0 : 1;

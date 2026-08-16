@@ -24,10 +24,7 @@
       "types": "./lib/types/profile.d.ts",
       "default": "./lib/profile.js"
     },
-    "./client": {
-      "types": "./dist/client.d.ts",
-      "default": "./dist/client.js"
-    },
+    "./client": "./dist/client.js",
     "./windows-pwsh-sandbox": {
       "types": "./lib/types/windows-pwsh-sandbox.d.ts",
       "default": "./lib/windows-pwsh-sandbox.js"
@@ -60,6 +57,7 @@
     "build/tray-icon.svg",
     "build/tray-icon*.png",
     "cordis.patch.yml",
+    "dist",
     "docs/**",
     "lib/**/*.js",
     "lib/**/*.map",

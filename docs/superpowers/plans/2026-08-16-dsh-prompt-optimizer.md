@@ -161,7 +161,7 @@ console.log(`✓ Built: ${outFinal} (${(wrapped.length / 1024).toFixed(1)} KB)`)
 - [ ] **Step 4: 创建测试运行器 `scripts/test.mjs`**
 
 ```js
-/** 单测运行器：esbuild 打包 tests/entry.ts → node 执行 → 按出口 `run()` 返回码退出 */
+/** 单测运行器：esbuild 打包 tests/entry.ts → node 执行 → 按 run() 返回值设置退出码 */
 
 import { build } from 'esbuild';
 import { mkdirSync } from 'node:fs';
@@ -186,7 +186,8 @@ await build({
 });
 
 const { run } = await import(outFile);
-process.exit(run() ? 0 : 1);
+const ok = await run();
+process.exitCode = ok ? 0 : 1;
 ```
 
 - [ ] **Step 5: 创建测试入口基线 `tests/entry.ts`**
@@ -196,20 +197,39 @@ process.exit(run() ? 0 : 1);
 
 import assert from 'node:assert';
 
-export function run(): boolean {
+export async function run(): Promise<boolean> {
   const results: string[] = [];
   const failures: string[] = [];
-  const check = (name: string, fn: () => void) => {
+  const check = async (name: string, fn: () => void | Promise<void>) => {
     try {
-      fn();
+      await fn();
       results.push(`✓ ${name}`);
     } catch (e) {
-      failures.push(`✗ ${name}: ${(e as Error).message}`);
+      failures.push(`✗ ${name}: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
-  check('harness self-test', () => {
+  await check('harness self-test', () => {
     assert.strictEqual(1 + 1, 2);
+  });
+
+  // 验证异步失败确实被捕获（真实回归测试，不许删除）
+  await check('harness catches async failures', async () => {
+    let caught = false;
+    const probe = async () => {
+      await check('(probe)', async () => {
+        throw new Error('boom');
+      });
+    };
+    const before = failures.length;
+    const beforeResults = results.length;
+    await probe();
+    caught = failures.length === before + 1;
+    assert.ok(caught, 'async failure was not recorded');
+    // 探针的失败与结果条目是预期内的：只验证「异步失败会被 check 记录」这一机制，
+    // 随后撤回归档，避免基座套件恒红（探针外的真实断言失败仍由外层 check 捕获并计入门禁）
+    failures.length = before;
+    results.length = beforeResults;
   });
 
   for (const r of results) console.log(r);
@@ -228,7 +248,8 @@ export function run(): boolean {
 ```
 node_modules/
 .pnpm-store/
-dist/
+dist/*
+!dist/client.js
 .tmp/
 ```
 
@@ -394,7 +415,7 @@ function runOptimizerTests(check: (name: string, fn: () => void) => void) {
 
 - [ ] **Step 2: 在 `run()` 中接线并验证失败**
 
-`tests/entry.ts` 的 `run()` 中，`check('harness self-test', ...)` 之后插入：`runOptimizerTests(check);`，并修正 import。运行：
+`tests/entry.ts` 的 `run()` 中，`check('harness self-test', ...)` 之后插入：`runOptimizerTests(check);`，并修正 import。注意：Task 1 起 `run()` 已是 `async`（`check` 接受 `() => void | Promise<void>` 并 `await`），但 `check(...)` 调用模式不变——`runOptimizerTests(check)` 直接传函数引用即可，`runOptimizerTests` 内的 `check(...)` 无需 await（check 内部吞错并即时记录）。运行：
 
 ```bash
 npm test
