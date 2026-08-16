@@ -34,7 +34,8 @@ export function apply(ctx: ClientContext) {
   let configMirror: PromptConfig = mergeConfig(undefined);
   // 外部配置变化纪元：驱动设置表单的 seed 修订号（见 SettingsRow）——表单 seed 修订号 = 本地提交序号
   // + configEpoch；configEpoch 仅在「外部配置变化」（非自身写回）时递增（宿主逐字段回显经收敛判定排除）。
-  // 已知边界：自身写入回合中发生的外部字段编辑可能被吞（回合收敛判定不匹配），镜像照常更新，下次自身写入自愈
+  // 已知边界：自身写入回合中发生的外部字段编辑可能被吞（回合收敛判定不匹配），且 pending 会钉在旧目标上，
+  // 使随后所有外部变化都判为 'in-progress'（epoch 冻结）——镜像照常更新，下次自身写入（保存/重置）即自愈。
   let configEpoch = 0;
   // 自身写入的目标（pending 平衡标记）：保存/重置时先于 set 置为写入目标；宿主逐字段回显收敛
   // （classifyRefresh 返回 'converged'，当前快照与目标全字段相等）后置空——据此把自身写入的回声
