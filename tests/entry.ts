@@ -1,7 +1,7 @@
 /** 单测入口 — 所有任务在此汇总断言（esbuild 打包后由 scripts/test.mjs 执行） */
 
 import assert from 'node:assert';
-import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind } from '../src/optimizer.js';
+import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind, extractSseDelta } from '../src/optimizer.js';
 import { NS, zh, en, langOf } from '../src/locales.js';
 import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-state.js';
 import { validateSettingsForm } from '../src/settings-form-state.js';
@@ -22,6 +22,17 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
     assert.deepStrictEqual(mergeConfig({ baseUrl: ' http://a/ ', apiKey: ' k ', model: ' m ' }),
       { baseUrl: 'http://a', apiKey: ' k ', model: 'm' });
     assert.deepStrictEqual(mergeConfig({ baseUrl: '', apiKey: '', model: '' }), DEFAULTS);
+  });
+
+  await check('extractSseDelta: delta text, [DONE], non-data and malformed lines', () => {
+    assert.strictEqual(extractSseDelta('data: {"choices":[{"delta":{"content":"你"}}]}'), '你');
+    assert.strictEqual(extractSseDelta('data: {"choices":[{"delta":{"content":""}}]}'), '');
+    assert.strictEqual(extractSseDelta('data: [DONE]'), null);
+    assert.strictEqual(extractSseDelta('data: {"OBJECT":"not-a-string"}'), null);
+    assert.strictEqual(extractSseDelta(': keep-alive comment'), null);
+    assert.strictEqual(extractSseDelta(''), null);
+    assert.strictEqual(extractSseDelta('data: {not json'), null);
+    assert.strictEqual(extractSseDelta('data: {"choices":[]}'), null);
   });
 
   await check('checkConfig rejects missing key/model/bad url', () => {
@@ -260,6 +271,21 @@ async function runStateTests(check: (name: string, fn: () => void | Promise<void
   await check('guide while optimizing returns same reference', () => {
     const began = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
     assert.strictEqual(reducePreview(began, { type: 'guide' }), began);
+  });
+
+  await check('reducePreview draft accumulates only while optimizing', () => {
+    const began = reducePreview(INITIAL_PREVIEW, { type: 'begin' });
+    const one = reducePreview(began, { type: 'draft', text: '你' });
+    assert.strictEqual(one.draft, '你');
+    assert.strictEqual(one.status, 'optimizing');
+    const two = reducePreview(one, { type: 'draft', text: '你好' });
+    assert.strictEqual(two.draft, '你好');
+    assert.strictEqual(reducePreview(two, { type: 'show', result: 'R' }).draft, '');
+    // idle 态丢弃 draft
+    assert.strictEqual(reducePreview(INITIAL_PREVIEW, { type: 'draft', text: 'x' }).draft, '');
+    // begin 清空历史 draft
+    const re = reducePreview({ ...INITIAL_PREVIEW, status: 'error', draft: 'stale' }, { type: 'begin' });
+    assert.strictEqual(re.draft, '');
   });
 
   await check('begin after fail resets errorKind and bumps generation', () => {

@@ -4,7 +4,7 @@
 
 import {
   checkConfig,
-  optimize,
+  optimizeStream,
   REQUEST_TIMEOUT_MS,
   toErrorKind,
   type Lang,
@@ -56,8 +56,18 @@ export async function runOptimize(ctx: {
     controller.abort();
   }, REQUEST_TIMEOUT_MS);
 
+  let streamed = '';
   try {
-    const result = await optimize({ config, text: draft, lang: ctx.getLang(), signal: controller.signal });
+    const result = await optimizeStream({
+      config,
+      text: draft,
+      lang: ctx.getLang(),
+      signal: controller.signal,
+      onText: (delta) => {
+        streamed += delta;
+        dispatchPreview({ type: 'draft', text: streamed });
+      },
+    });
     dispatchPreview({ type: 'show', result });
   } catch (e) {
     // 先判定中止：用户/组件取消与超时都表现为 AbortError；仅超时写入错误态

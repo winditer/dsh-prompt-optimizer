@@ -199,7 +199,11 @@ export function PreviewCard(props: PreviewCardProps) {
         </>
       )}
 
-      {status === 'optimizing' && <div className="dsh-po-card-body">{t('card.optimizing')}</div>}
+      {status === 'optimizing' && (
+        <div className="dsh-po-card-body">
+          {state.draft ? <span style={{ whiteSpace: 'pre-wrap' }}>{state.draft}</span> : t('card.optimizing')}
+        </div>
+      )}
 
       {status === 'preview' && (
         <>

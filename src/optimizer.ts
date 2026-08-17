@@ -56,7 +56,7 @@ export function buildSystemPrompt(lang: Lang): string {
   return lang === 'zh' ? ZH_SYSTEM : EN_SYSTEM;
 }
 
-export function buildRequestBody(config: PromptConfig, text: string, lang: Lang): object {
+export function buildRequestBody(config: PromptConfig, text: string, lang: Lang, stream = false): object {
   return {
     model: config.model,
     messages: [
@@ -65,7 +65,7 @@ export function buildRequestBody(config: PromptConfig, text: string, lang: Lang)
     ],
     temperature: 0.7,
     max_tokens: 2048,
-    stream: false,
+    stream,
   };
 }
 
@@ -166,4 +166,102 @@ export async function optimize(opts: {
   const content = extractChoiceContent(payload);
   if (!content || !content.trim()) throw new OptimizeError('empty', 'empty completion');
   return extractResult(content);
+}
+
+/**
+ * 解析一行 SSE 数据：(data: {...}) → 增量文本；[DONE]/非 data 行/非 JSON/无 delta → null。
+ * 纯函数，便于单测。
+ */
+export function extractSseDelta(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) return null;
+  const data = trimmed.slice('data:'.length).trim();
+  if (data === '[DONE]') return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  if (typeof payload !== 'object' || payload === null) return null;
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return null;
+  const first = choices[0] as { delta?: { content?: unknown } };
+  const content = first?.delta?.content;
+  return typeof content === 'string' ? content : null;
+}
+
+/**
+ * 流式优化：逐块解析 SSE，边收边回调 onText(delta)；返回完整正文。
+ * 相比非流式 optimize()：首字更快、长输出不需要等完整生成——按钮/卡片能边生成边显示。
+ */
+export async function optimizeStream(opts: {
+  config: PromptConfig;
+  text: string;
+  lang: Lang;
+  signal?: AbortSignal;
+  onText?: (delta: string) => void;
+}): Promise<string> {
+  const { config, text, lang, signal, onText } = opts;
+  const check = checkConfig(config);
+  if (!check.ok) throw new OptimizeError('config', check.reason);
+
+  let res: Response;
+  try {
+    res = await fetch(`${normalizeBaseUrl(config.baseUrl)}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(buildRequestBody(config, text, lang, true)),
+      signal,
+    });
+  } catch (e) {
+    throw toErrorKind(e);
+  }
+
+  if (res.status === 401) throw new OptimizeError('unauthorized', `HTTP 401`);
+  if (res.status === 403) throw new OptimizeError('forbidden', `HTTP 403`);
+  if (!res.ok) throw new OptimizeError('http', `HTTP ${res.status}`);
+  if (!res.body) throw new OptimizeError('bad-response', 'missing response body');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let full = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        const delta = extractSseDelta(line);
+        if (delta !== null) {
+          full += delta;
+          onText?.(delta);
+        }
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // 已中止/释放时忽略
+    }
+  }
+  // 尾行（无换行结尾的 data 行）
+  if (buffer.trim()) {
+    const delta = extractSseDelta(buffer);
+    if (delta !== null) {
+      full += delta;
+      onText?.(delta);
+    }
+  }
+
+  const content = extractResult(full);
+  if (!content.trim()) throw new OptimizeError('empty', 'empty completion');
+  return content;
 }

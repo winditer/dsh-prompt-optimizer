@@ -9,6 +9,8 @@ export interface PreviewState {
   result: string;
   errorKind: OptimizeErrorKind | null;
   generation: number;
+  /** 流式优化中的增量文本（optimizing 态实时更新；非流式全程为空串） */
+  draft: string;
 }
 
 /** 只读共享常量：reducer 永不写回它或返回可变的新对象；消费者（Task 4 store 胶水）必须以 { ...INITIAL_PREVIEW } 为每会话种子 */
@@ -17,6 +19,7 @@ export const INITIAL_PREVIEW: PreviewState = {
   result: '',
   errorKind: null,
   generation: 0,
+  draft: '',
 };
 
 export type PreviewAction =
@@ -24,16 +27,17 @@ export type PreviewAction =
   | { type: 'show'; result: string }
   | { type: 'fail'; kind: OptimizeErrorKind }
   | { type: 'guide' }
-  | { type: 'close' };
+  | { type: 'close' }
+  | { type: 'draft'; text: string };
 
 export function reducePreview(state: PreviewState, action: PreviewAction): PreviewState {
   switch (action.type) {
     case 'begin':
       if (state.status === 'optimizing') return state;
-      return { ...state, status: 'optimizing', errorKind: null, generation: state.generation + 1 };
+      return { ...state, status: 'optimizing', errorKind: null, draft: '', generation: state.generation + 1 };
     case 'show':
       return state.status === 'optimizing'
-        ? { ...state, status: 'preview', result: action.result }
+        ? { ...state, status: 'preview', result: action.result, draft: '' }
         : state;
     case 'fail':
       return state.status === 'optimizing'
@@ -43,6 +47,8 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
       return state.status === 'optimizing' ? state : { ...state, status: 'guide' };
     case 'close':
       return INITIAL_PREVIEW;
+    case 'draft':
+      return state.status === 'optimizing' ? { ...state, draft: action.text } : state;
     default:
       return state;
   }
