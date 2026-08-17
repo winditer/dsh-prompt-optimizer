@@ -56,16 +56,25 @@ export async function runOptimize(ctx: {
     controller.abort();
   }, REQUEST_TIMEOUT_MS);
 
-  let streamed = '';
+  // 展示累积：正文优先；正文尚未出现（v4 系先输出长段推理）时展示推理过程，让流式立即可见
+  let reasoning = '';
+  let content = '';
+  let shown = '';
   try {
     const result = await optimizeStream({
       config,
       text: draft,
       lang: ctx.getLang(),
       signal: controller.signal,
-      onText: (delta) => {
-        streamed += delta;
-        dispatchPreview({ type: 'draft', text: streamed });
+      onEvent: (delta) => {
+        if (delta.kind === 'content') {
+          content += delta.text;
+          shown = content;
+        } else {
+          reasoning += delta.text;
+          shown = reasoning;
+        }
+        dispatchPreview({ type: 'draft', text: shown });
       },
     });
     dispatchPreview({ type: 'show', result });

@@ -24,15 +24,21 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
     assert.deepStrictEqual(mergeConfig({ baseUrl: '', apiKey: '', model: '' }), DEFAULTS);
   });
 
-  await check('extractSseDelta: delta text, [DONE], non-data and malformed lines', () => {
-    assert.strictEqual(extractSseDelta('data: {"choices":[{"delta":{"content":"你"}}]}'), '你');
-    assert.strictEqual(extractSseDelta('data: {"choices":[{"delta":{"content":""}}]}'), '');
+  await check('extractSseDelta: content/reasoning events, [DONE], non-data and malformed lines', () => {
+    assert.deepStrictEqual(extractSseDelta('data: {"choices":[{"delta":{"content":"你"}}]}'), { kind: 'content', text: '你' });
+    assert.deepStrictEqual(extractSseDelta('data: {"choices":[{"delta":{"content":""}}]}'), { kind: 'content', text: '' });
+    assert.deepStrictEqual(extractSseDelta('data: {"choices":[{"delta":{"reasoning_content":"We"}}]}'), { kind: 'reasoning', text: 'We' });
     assert.strictEqual(extractSseDelta('data: [DONE]'), null);
-    assert.strictEqual(extractSseDelta('data: {"OBJECT":"not-a-string"}'), null);
+    assert.strictEqual(extractSseDelta('data: {"choices":[{"delta":{"role":"assistant"}}]}'), null);
     assert.strictEqual(extractSseDelta(': keep-alive comment'), null);
     assert.strictEqual(extractSseDelta(''), null);
     assert.strictEqual(extractSseDelta('data: {not json'), null);
     assert.strictEqual(extractSseDelta('data: {"choices":[]}'), null);
+    // content 优先于 reasoning（两者同 chunk 时）
+    assert.deepStrictEqual(
+      extractSseDelta('data: {"choices":[{"delta":{"content":"正文","reasoning_content":"推理"}}]}'),
+      { kind: 'content', text: '正文' },
+    );
   });
 
   await check('checkConfig rejects missing key/model/bad url', () => {

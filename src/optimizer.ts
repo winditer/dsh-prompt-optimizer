@@ -169,10 +169,20 @@ export async function optimize(opts: {
 }
 
 /**
- * 解析一行 SSE 数据：(data: {...}) → 增量文本；[DONE]/非 data 行/非 JSON/无 delta → null。
- * 纯函数，便于单测。
+ * SSE 增量事件：内容或推理过程的一段文本。
+ * v4 系模型（v4-flash 等）流式先输出长段 reasoning_content（推理过程），随后才输出
+ * content 正文——两者都要实时呈现，否则推理期卡片看起来像「非流式」（实测 ~80 个 chunk
+ * 全是 reasoning，正文最后才出现）。
  */
-export function extractSseDelta(line: string): string | null {
+export type SseDelta =
+  | { kind: 'content'; text: string }
+  | { kind: 'reasoning'; text: string };
+
+/**
+ * 解析一行 SSE 数据：(data: {...}) → 增量事件；
+ * [DONE]/非 data 行/非 JSON/无内容 delta → null。纯函数，便于单测。
+ */
+export function extractSseDelta(line: string): SseDelta | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith('data:')) return null;
   const data = trimmed.slice('data:'.length).trim();
@@ -186,9 +196,11 @@ export function extractSseDelta(line: string): string | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const choices = (payload as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) return null;
-  const first = choices[0] as { delta?: { content?: unknown } };
-  const content = first?.delta?.content;
-  return typeof content === 'string' ? content : null;
+  const first = choices[0] as { delta?: { content?: unknown; reasoning_content?: unknown } };
+  const delta = first?.delta;
+  if (typeof delta?.content === 'string') return { kind: 'content', text: delta.content };
+  if (typeof delta?.reasoning_content === 'string') return { kind: 'reasoning', text: delta.reasoning_content };
+  return null;
 }
 
 /**
@@ -200,9 +212,9 @@ export async function optimizeStream(opts: {
   text: string;
   lang: Lang;
   signal?: AbortSignal;
-  onText?: (delta: string) => void;
+  onEvent?: (delta: SseDelta) => void;
 }): Promise<string> {
-  const { config, text, lang, signal, onText } = opts;
+  const { config, text, lang, signal, onEvent } = opts;
   const check = checkConfig(config);
   if (!check.ok) throw new OptimizeError('config', check.reason);
 
@@ -240,8 +252,8 @@ export async function optimizeStream(opts: {
       for (const line of lines) {
         const delta = extractSseDelta(line);
         if (delta !== null) {
-          full += delta;
-          onText?.(delta);
+          onEvent?.(delta);
+          if (delta.kind === 'content') full += delta.text;
         }
       }
     }
@@ -256,8 +268,8 @@ export async function optimizeStream(opts: {
   if (buffer.trim()) {
     const delta = extractSseDelta(buffer);
     if (delta !== null) {
-      full += delta;
-      onText?.(delta);
+      onEvent?.(delta);
+      if (delta.kind === 'content') full += delta.text;
     }
   }
 
