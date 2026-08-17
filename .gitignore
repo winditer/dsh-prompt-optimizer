@@ -3,3 +3,4 @@ node_modules/
 dist/*
 !dist/client.js
 .tmp/
+pnpm-lock.yaml
