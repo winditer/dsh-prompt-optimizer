@@ -15,6 +15,8 @@ export interface SettingsRowProps {
   saveConfig: (values: SettingsFormValues) => Promise<void>;
   resetConfig: () => Promise<void>;
   getEpoch: () => number;
+  /** 调试快照读取：保存后显示 settings 本地快照的实际内容 */
+  getSettingsSnapshot?: () => unknown;
 }
 
 const CSS_ID = 'dsh-prompt-optimizer/settings.css';
@@ -91,7 +93,7 @@ function injectCss() {
 }
 
 export function SettingsRow(props: SettingsRowProps) {
-  const { t, useStore, actions, getConfig, saveConfig, resetConfig, getEpoch } = props;
+  const { t, useStore, actions, getConfig, saveConfig, resetConfig, getEpoch, getSettingsSnapshot } = props;
   const [expanded, setExpanded] = useState(false);
   const [submitRevision, setSubmitRevision] = useState(0);
 
@@ -136,6 +138,13 @@ export function SettingsRow(props: SettingsRowProps) {
       setSubmitRevision((r) => r + 1);
       // 与效应回跑的 seed 修订号（新本地序号 + 纪元）对齐，使保存后的重播种被抑制
       actions.commit(submitRevision + 1 + getEpoch());
+      // 调试观测：保存后立即与 1 秒后各读一次 settings 本地快照，显示在保存按钮旁。
+      // 用于区分「set 未写本地」「写了未回显」「回显未持久化」——定位后移除。
+      const snap = getSettingsSnapshot ? JSON.stringify(getSettingsSnapshot()) : 'n/a';
+      setTimeout(() => {
+        const snap2 = getSettingsSnapshot ? JSON.stringify(getSettingsSnapshot()) : 'n/a';
+        setRpcError(`[debug] 快照: ${snap} → 1s后: ${snap2}`);
+      }, 1000);
     } catch (outer) {
       setRpcError(`${t('settings.saveFailed')}：${outer instanceof Error ? outer.message : String(outer)}`);
     }
