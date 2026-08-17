@@ -36,6 +36,8 @@ export const zh = {
   'settings.save': '保存',
   'settings.reset': '恢复默认',
   'settings.saved': '已保存',
+  'settings.saveFailed': '保存失败',
+  'settings.resetFailed': '重置失败',
   'settings.clickToEdit': '点击配置',
 } as const;
 
@@ -71,6 +73,8 @@ export const en: LocaleDict = {
   'settings.save': 'Save',
   'settings.reset': 'Reset to defaults',
   'settings.saved': 'Saved',
+  'settings.saveFailed': 'Save failed',
+  'settings.resetFailed': 'Reset failed',
   'settings.clickToEdit': 'Click to configure',
 } as const;
 

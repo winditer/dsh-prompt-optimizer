@@ -12,8 +12,8 @@ export interface SettingsRowProps {
   useStore: <T>(selector: (s: SettingsFormState) => T) => T;
   actions: SettingsFormActions;
   getConfig: () => PromptConfig;
-  saveConfig: (values: SettingsFormValues) => void;
-  resetConfig: () => void;
+  saveConfig: (values: SettingsFormValues) => Promise<void>;
+  resetConfig: () => Promise<void>;
   getEpoch: () => number;
 }
 
@@ -98,6 +98,8 @@ export function SettingsRow(props: SettingsRowProps) {
   const values = useStore((s) => s.values);
   const saved = useStore((s) => s.saved);
   const error = useStore((s) => s.error);
+  // 保存/重置 RPC 失败时显示的原始错误（不再静默失败：settings 写入出错必须让用户看得到）
+  const [rpcError, setRpcError] = useState<string | null>(null);
 
   useEffect(() => injectCss(), []);
 
@@ -122,25 +124,35 @@ export function SettingsRow(props: SettingsRowProps) {
   // 「去设置」（预览卡未配置引导）→ 自动展开表单
   useEffect(() => onOpenSettingsRequest(() => setExpanded(true)), []);
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    setRpcError(null);
     const errors = actions.validate(values);
     if (errors) {
       actions.fail(Object.values(errors)[0]);
       return;
     }
-    saveConfig(values);
-    setSubmitRevision((r) => r + 1);
-    // 与效应回跑的 seed 修订号（新本地序号 + 纪元）对齐，使保存后的重播种被抑制
-    actions.commit(submitRevision + 1 + getEpoch());
+    try {
+      await saveConfig(values);
+      setSubmitRevision((r) => r + 1);
+      // 与效应回跑的 seed 修订号（新本地序号 + 纪元）对齐，使保存后的重播种被抑制
+      actions.commit(submitRevision + 1 + getEpoch());
+    } catch (outer) {
+      setRpcError(`${t('settings.saveFailed')}：${outer instanceof Error ? outer.message : String(outer)}`);
+    }
   };
 
-  const handleReset = () => {
-    resetConfig();
-    actions.seed(
-      { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model },
-      submitRevision + 1 + getEpoch(),
-    );
-    setSubmitRevision((r) => r + 1);
+  const handleReset = async () => {
+    setRpcError(null);
+    try {
+      await resetConfig();
+      actions.seed(
+        { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model },
+        submitRevision + 1 + getEpoch(),
+      );
+      setSubmitRevision((r) => r + 1);
+    } catch (outer) {
+      setRpcError(`${t('settings.resetFailed')}：${outer instanceof Error ? outer.message : String(outer)}`);
+    }
   };
 
   return (
@@ -193,7 +205,8 @@ export function SettingsRow(props: SettingsRowProps) {
               {t('settings.reset')}
             </button>
             {saved && <span className="optiSettingsHint">{t('settings.saved')}</span>}
-            {error && <span className="optiSettingsErr">{t(error)}</span>}
+            {rpcError && <span className="optiSettingsErr">{rpcError}</span>}
+            {!rpcError && error && <span className="optiSettingsErr">{t(error)}</span>}
           </div>
           <div className="optiSettingsHint">{t('settings.desc')}</div>
         </div>

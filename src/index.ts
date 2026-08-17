@@ -100,7 +100,7 @@ export function apply(ctx: ClientContext) {
 
   // 6. 设置行（root 作用域）
   const settingsStore = createSettingsFormStore();
-  const saveConfig = (raw: Partial<PromptConfig>) => {
+  const saveConfig = async (raw: Partial<PromptConfig>): Promise<void> => {
     const merged = mergeConfig({ ...configMirror, ...raw });
     const written: PromptConfig = {
       baseUrl: merged.baseUrl,
@@ -112,16 +112,28 @@ export function apply(ctx: ClientContext) {
     // 不递增 configEpoch。注意：此处不调用 refreshConfig()——同步读到的仍是写入前的旧快照（RPC 未落盘），
     // 镜像更新统一走 subscribe 回声路径。
     pendingSelfBalance = written;
-    settingsScope.set('baseUrl', written.baseUrl);
-    settingsScope.set('apiKey', written.apiKey);
-    settingsScope.set('model', written.model);
+    try {
+      await settingsScope.set('baseUrl', written.baseUrl);
+      await settingsScope.set('apiKey', written.apiKey);
+      await settingsScope.set('model', written.model);
+    } catch (error) {
+      throw new Error(
+        `settings 写入失败: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   };
-  const resetConfig = () => {
+  const resetConfig = async (): Promise<void> => {
     // pending 置目标（先于 set）：恢复默认值的逐字段回显同样按收敛判定，不递增 configEpoch
     pendingSelfBalance = { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model };
-    settingsScope.set('baseUrl', DEFAULTS.baseUrl);
-    settingsScope.set('apiKey', DEFAULTS.apiKey);
-    settingsScope.set('model', DEFAULTS.model);
+    try {
+      await settingsScope.set('baseUrl', DEFAULTS.baseUrl);
+      await settingsScope.set('apiKey', DEFAULTS.apiKey);
+      await settingsScope.set('model', DEFAULTS.model);
+    } catch (error) {
+      throw new Error(
+        `settings 重置失败: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   };
 
   ctx.inject(['slots'], (scope) => {
