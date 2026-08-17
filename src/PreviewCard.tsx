@@ -1,22 +1,13 @@
-/** 输入区浮层预览卡片：guide / optimizing / preview / error 四种内容态 */
+/** 输入区浮层预览卡片：guide / optimizing / preview / error 四种内容态
+ *  状态来自模块级预览总线（preview-bus），不依赖会话 store/hook props */
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { Lang, PromptConfig } from './optimizer.js';
-import type { OptimizerActions } from './optimizer-store.js';
-import { runOptimize } from './optimizer-store.js';
-import type { PreviewState } from './preview-state.js';
-
-/** 会话标准 kit 提供的输入 action 面 */
-interface InputActions {
-  setDraft(text: string): void;
-}
+import { runOptimize, closePreview } from './optimizer-store.js';
+import { getPreviewBusState, subscribePreviewBus } from './preview-bus.js';
 
 export interface PreviewCardProps {
   t: (key: string) => string;
-  useInput: () => { draft: string };
-  inputActions: InputActions;
-  useStore: <T>(selector: (s: PreviewState) => T) => T;
-  actions: OptimizerActions;
   getConfig: () => PromptConfig;
   getLang: () => Lang;
   openSettings: () => void;
@@ -87,7 +78,37 @@ function injectCss() {
   document.head.appendChild(style);
 }
 
-function errorKey(kind: PreviewState['errorKind']): string {
+/** 找 composer 输入框：优先焦点，否则第一个非 disabled textarea */
+function findComposer(): HTMLTextAreaElement | null {
+  const active = document.activeElement;
+  if (active instanceof HTMLTextAreaElement && !active.disabled) return active;
+  const all = document.querySelectorAll<HTMLTextAreaElement>('textarea');
+  for (const ta of all) {
+    if (!ta.disabled) return ta;
+  }
+  return null;
+}
+
+function readComposerText(): string {
+  const ta = findComposer();
+  return ta ? ta.value : '';
+}
+
+/** 用原生 value setter 写回，让 React 受控组件感知（再派发 input 事件触发 onChange） */
+function writeComposerText(text: string): void {
+  const ta = findComposer();
+  if (!ta) return;
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+  if (setter) {
+    setter.call(ta, text);
+  } else {
+    ta.value = text;
+  }
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.focus();
+}
+
+function errorKey(kind: string | null): string {
   switch (kind) {
     // kind → locale key；'config' 在 UI 上不可达（runOptimize 先走 guide），AbortError→timeout 由 runOptimize 先行拦截，保留双保险
     case 'unauthorized': case 'forbidden': case 'timeout': case 'network': case 'cors': case 'http': case 'bad-response': case 'empty': case 'config':
@@ -98,12 +119,20 @@ function errorKey(kind: PreviewState['errorKind']): string {
 }
 
 export function PreviewCard(props: PreviewCardProps) {
-  const { t, useInput, inputActions, useStore, actions, getConfig, getLang, openSettings } = props;
+  const { t, getConfig, getLang, openSettings } = props;
+
+  // 订阅模块级预览总线（替代会话 store props）
+  const [state, setState] = useState(() => getPreviewBusState());
+  useEffect(
+    () => subscribePreviewBus(() => setState(getPreviewBusState())),
+    [],
+  );
 
   useEffect(() => injectCss(), []);
 
   // 卸载时清理：清除挂起的 copied 复位定时器，并标记未挂载，
   // 防止迟到的 setCopied(true)（copy 的 await 期间卸载）在卸载后触发。
+  const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -115,23 +144,19 @@ export function PreviewCard(props: PreviewCardProps) {
     };
   }, []);
 
-  const input = useInput();
-  const status = useStore((s) => s.status);
-  const result = useStore((s) => s.result);
-  const errorKind = useStore((s) => s.errorKind);
+  const { status, result, errorKind } = state;
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<number | null>(null);
-  const mountedRef = useRef(true);
 
   if (status === 'idle') return null;
 
   const retry = () => {
-    void runOptimize(actions, { getConfig, getLang, getDraft: () => input.draft });
+    void runOptimize({ getConfig, getLang, getDraft: () => readComposerText() });
   };
 
   const replace = () => {
-    inputActions.setDraft(result);
-    actions.close();
+    writeComposerText(result);
+    closePreview();
   };
 
   const copy = async () => {
@@ -154,7 +179,7 @@ export function PreviewCard(props: PreviewCardProps) {
     <div className="dsh-po-card" role="status">
       <div className="dsh-po-card-head">
         <span>{t('card.title')}</span>
-        <button type="button" className="dsh-po-card-btn" onClick={() => actions.close()}>
+        <button type="button" className="dsh-po-card-btn" onClick={() => closePreview()}>
           ✕
         </button>
       </div>
@@ -164,10 +189,10 @@ export function PreviewCard(props: PreviewCardProps) {
           <div className="dsh-po-card-body">{t('guide.title')}</div>
           <div className="dsh-po-card-body">{t('guide.desc')}</div>
           <div className="dsh-po-card-row">
-            <button type="button" className="dsh-po-card-btn primary" onClick={() => { actions.close(); openSettings(); }}>
+            <button type="button" className="dsh-po-card-btn primary" onClick={() => { closePreview(); openSettings(); }}>
               {t('guide.action')}
             </button>
-            <button type="button" className="dsh-po-card-btn" onClick={() => actions.close()}>
+            <button type="button" className="dsh-po-card-btn" onClick={() => closePreview()}>
               {t('guide.dismiss')}
             </button>
           </div>
@@ -189,7 +214,7 @@ export function PreviewCard(props: PreviewCardProps) {
             <button type="button" className="dsh-po-card-btn" onClick={retry}>
               {t('card.retry')}
             </button>
-            <button type="button" className="dsh-po-card-btn" onClick={() => actions.close()}>
+            <button type="button" className="dsh-po-card-btn" onClick={() => closePreview()}>
               {t('card.dismiss')}
             </button>
           </div>
@@ -203,7 +228,7 @@ export function PreviewCard(props: PreviewCardProps) {
             <button type="button" className="dsh-po-card-btn primary" onClick={retry}>
               {t('card.retry')}
             </button>
-            <button type="button" className="dsh-po-card-btn" onClick={() => actions.close()}>
+            <button type="button" className="dsh-po-card-btn" onClick={() => closePreview()}>
               {t('card.dismiss')}
             </button>
           </div>

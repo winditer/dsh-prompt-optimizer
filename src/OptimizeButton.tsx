@@ -1,17 +1,13 @@
-/** 输入栏右侧「优化」按钮 */
+/** 输入栏右侧「优化」按钮 —— 不依赖会话 store/hook props，状态走模块级预览总线 */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import type { Lang, PromptConfig } from './optimizer.js';
-import type { OptimizerActions } from './optimizer-store.js';
 import { runOptimize } from './optimizer-store.js';
-import type { PreviewState } from './preview-state.js';
+import { getPreviewBusState, subscribePreviewBus } from './preview-bus.js';
 import { onOptimizeRequest } from './events.js';
 
 export interface OptimizeButtonProps {
   t: (key: string) => string;
-  /** 会话 store 订阅（若渲染层提供）；提供时用于禁用态/繁忙态展示 */
-  useStore?: <T>(selector: (s: PreviewState) => T) => T;
-  actions: OptimizerActions;
   getConfig: () => PromptConfig;
   getLang: () => Lang;
 }
@@ -61,12 +57,15 @@ function readDraft(): string {
 }
 
 export function OptimizeButton(props: OptimizeButtonProps) {
-  const { t, useStore, actions, getConfig, getLang } = props;
+  const { t, getConfig, getLang } = props;
 
-  // 渲染层提供会话 store 时读取全局繁忙态；缺失则用组件本地 busy（不阻塞渲染）
-  const storeBusy = useStore ? useStore((s) => s.status) === 'optimizing' : false;
-  const [localBusy, setLocalBusy] = useState(false);
-  const busy = storeBusy || localBusy;
+  // 繁忙态：订阅模块级预览总线（替代会话 store props）
+  const [busy, setBusy] = useState(() => getPreviewBusState().status === 'optimizing');
+  useEffect(
+    () => subscribePreviewBus(() => setBusy(getPreviewBusState().status === 'optimizing')),
+    [],
+  );
+
   // mousedown 预读草稿：点击按钮瞬间焦点会切到按钮（activeElement 不再是 textarea），
   // 但 mousedown 早于焦点切换——此刻读到的 activeElement 仍是输入框。
   const draftRef = React.useRef('');
@@ -80,13 +79,12 @@ export function OptimizeButton(props: OptimizeButtonProps) {
     if (busy) return;
     const draft = draftRef.current || readDraft();
     if (!draft.trim()) return;
-    setLocalBusy(true);
-    void runOptimize(actions, {
+    void runOptimize({
       getConfig,
       getLang,
       getDraft: () => draft,
-    }).finally(() => setLocalBusy(false));
-  }, [busy, actions, getConfig, getLang]);
+    });
+  }, [busy, getConfig, getLang]);
 
   // Alt+O 快捷键（index.ts 全局监听）→ 等效点击按钮
   useEffect(() => onOptimizeRequest(handleClick), [handleClick]);

@@ -1,11 +1,10 @@
 /** dsh-prompt-optimizer 插件入口 — apply(ctx) */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
-import React from 'react';
 import type { Lang, PromptConfig } from './optimizer.js';
 import { DEFAULTS, mergeConfig } from './optimizer.js';
 import { NS, zh, en, langOf } from './locales.js';
-import { createOptimizerStore, type OptimizerActions } from './optimizer-store.js';
+import type { OptimizerActions } from './optimizer-store.js';
 import { emitOptimizeRequest, emitOpenSettingsRequest } from './events.js';
 import { OptimizeButton } from './OptimizeButton.tsx';
 import { PreviewCard } from './PreviewCard.tsx';
@@ -18,9 +17,6 @@ import { createSettingsFormStore } from './settings-store.js';
  * dsh-better-sidebar 亦声明 locale）；错误声明会让 fiber 永久 PENDING，启动审计直接判失败。
  */
 export const inject = ['slots', 'sessions', 'locale', 'connection'];
-
-/** 会话作用域 list slot 的 store 句柄（按钮与预览卡片共享 per-session 实例） */
-const optimizerStore = createOptimizerStore();
 
 export function apply(ctx: ClientContext) {
   // 1. 文案
@@ -58,19 +54,6 @@ export function apply(ctx: ClientContext) {
 
   // 4. 会话槽位：按钮 + 预览卡片
   ctx.inject(['slots', 'sessions'], (scope) => {
-    // 临时探针（定位后移除）：纯 div 条目，判定「input.right 槽位是否渲染」——
-    // 看到 'PO-RIGHT-OK' 说明槽位渲染 OK、问题在 OptimizeButton 组件；看不到则槽位/注册问题。
-    scope.slots.inject('conversation.input.right', () =>
-      scope.slots.register(
-        {
-          name: 'conversation.input.right',
-          id: 'prompt-optimizer-probe',
-          order: 99,
-          locale: NS,
-        },
-        () => React.createElement('span', { 'data-po-probe': '1', style: { fontSize: 10, color: '#888', padding: '0 4px' } }, 'PO-RIGHT-OK'),
-      ),
-    );
     scope.slots.inject('conversation.input.right', () =>
       scope.slots.register(
         {
@@ -78,7 +61,6 @@ export function apply(ctx: ClientContext) {
           id: 'prompt-optimizer-button',
           order: 0,
           locale: NS,
-          store: optimizerStore,
           inject: () => ({
             getConfig: () => configMirror,
             getLang: () => lang,
@@ -94,7 +76,6 @@ export function apply(ctx: ClientContext) {
           id: 'prompt-optimizer-card',
           order: 10,
           locale: NS,
-          store: optimizerStore,
           inject: () => ({
             getConfig: () => configMirror,
             getLang: () => lang,
