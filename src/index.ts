@@ -10,17 +10,13 @@ import { OptimizeButton } from './OptimizeButton.tsx';
 import { PreviewCard } from './PreviewCard.tsx';
 import { SettingsRow } from './SettingsRow.tsx';
 import { createSettingsFormStore } from './settings-store.js';
-import { classifyRefresh } from './settings-epoch.js';
-
-/** settings namespace（与插件 id 一致） */
-const SETTINGS_NS = 'prompt-optimizer';
 
 /**
  * 声明插件依赖的客户端服务（cordis service keys）：apply 内经 `ctx.<service>` 访问的服务必须在此声明。
  * 值须为服务名而非包 id——与同形态先例一致（dsh-message-rail: ["slots","sessions"]；
  * dsh-better-sidebar 亦声明 locale）；错误声明会让 fiber 永久 PENDING，启动审计直接判失败。
  */
-export const inject = ['slots', 'sessions', 'locale', 'settingsScope'];
+export const inject = ['slots', 'sessions', 'locale', 'connection'];
 
 /** 会话作用域 list slot 的 store 句柄（按钮与预览卡片共享 per-session 实例） */
 const optimizerStore = createOptimizerStore();
@@ -29,31 +25,29 @@ export function apply(ctx: ClientContext) {
   // 1. 文案
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'prompt-optimizer: locale registration');
 
-  // 2. 配置镜像（settingsScope 为唯一事实源）
-  const settingsScope = ctx.settingsScope.bind({ namespace: SETTINGS_NS });
+  // 2. 配置镜像：自持 RPC 配置（server half 读写 ~/.dsh/prompt-optimizer-config.json，通道
+  // '/dsh-prompt-optimizer'——同 dsh-sticky-note 模式）。不用 settingsScope：桌面应用的 host
+  // settings 注册表对未注册 namespace 返回 unavailable，set 静默失效（实测）。
   let configMirror: PromptConfig = mergeConfig(undefined);
-  // 外部配置变化纪元：驱动设置表单的 seed 修订号（见 SettingsRow）——表单 seed 修订号 = 本地提交序号
-  // + configEpoch；configEpoch 仅在「外部配置变化」（非自身写回）时递增（宿主逐字段回显经收敛判定排除）。
-  // 已知边界：自身写入回合中发生的外部字段编辑可能被吞（回合收敛判定不匹配），且 pending 会钉在旧目标上，
-  // 使随后所有外部变化都判为 'in-progress'（epoch 冻结）——镜像照常更新，下次自身写入（保存/重置）即自愈。
   let configEpoch = 0;
-  // 自身写入的目标（pending 平衡标记）：保存/重置时先于 set 置为写入目标；宿主逐字段回显收敛
-  // （classifyRefresh 返回 'converged'，当前快照与目标全字段相等）后置空——据此把自身写入的回声
-  // 与真正的外部配置变化区分开，自身写入不递增 configEpoch
-  let pendingSelfBalance: PromptConfig | null = null;
-  function refreshConfig(): void {
-    const cur = mergeConfig(settingsScope.getSnapshot()?.value);
-    const kind = classifyRefresh(cur, pendingSelfBalance);
-    if (kind === 'converged') pendingSelfBalance = null; // 收敛：本轮全部回显完毕
-    if (kind === 'external') configEpoch += 1;
-    configMirror = cur;
-  }
-  // 启动直接赋值（不递增纪元）：宿主异步初始加载的回显 → subscribe → refreshConfig 会递增一次，属预期
-  configMirror = mergeConfig(settingsScope.getSnapshot()?.value);
-  ctx.effect(
-    () => settingsScope.subscribe(() => refreshConfig()),
-    'prompt-optimizer: settings subscription',
-  );
+  const rpcConfig = async (endpoint: string, payload?: Record<string, unknown>): Promise<unknown> => {
+    const result = await ctx.connection.rpc.call('/dsh-prompt-optimizer', endpoint, payload ?? {});
+    if (!result.ok) {
+      throw new Error(
+        `config rpc ${endpoint} failed: ${(result.error && (result.error.details || result.error.code)) || 'rpc failed'}`,
+      );
+    }
+    return result.value;
+  };
+  const loadConfig = async (): Promise<void> => {
+    try {
+      const value = await rpcConfig('get');
+      configMirror = mergeConfig(value as Partial<PromptConfig> | undefined);
+    } catch {
+      // 初次连接未就绪时保持默认；下次保存后镜像即更新
+    }
+  };
+  void loadConfig();
 
   // 3. 语言镜像
   let lang: Lang = langOf(ctx.locale.getLocale().active);
@@ -107,32 +101,21 @@ export function apply(ctx: ClientContext) {
       apiKey: merged.apiKey.trim(),
       model: merged.model,
     };
-    // pending 置目标（先于 set；目标=实际落盘值，apiKey 已 trim）：set 为异步逐字段 RPC，落盘后经
-    // settingsScope.subscribe → refreshConfig 回显；回显收敛前一律 classifyRefresh='in-progress'，
-    // 不递增 configEpoch。注意：此处不调用 refreshConfig()——同步读到的仍是写入前的旧快照（RPC 未落盘），
-    // 镜像更新统一走 subscribe 回声路径。
-    pendingSelfBalance = written;
     try {
-      await settingsScope.set('baseUrl', written.baseUrl);
-      await settingsScope.set('apiKey', written.apiKey);
-      await settingsScope.set('model', written.model);
+      const saved = await rpcConfig('set', { patch: { baseUrl: written.baseUrl, apiKey: written.apiKey, model: written.model } });
+      configMirror = mergeConfig(saved as Partial<PromptConfig> | undefined);
     } catch (error) {
-      throw new Error(
-        `settings 写入失败: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new Error(error instanceof Error ? error.message : String(error));
     }
   };
   const resetConfig = async (): Promise<void> => {
-    // pending 置目标（先于 set）：恢复默认值的逐字段回显同样按收敛判定，不递增 configEpoch
-    pendingSelfBalance = { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model };
     try {
-      await settingsScope.set('baseUrl', DEFAULTS.baseUrl);
-      await settingsScope.set('apiKey', DEFAULTS.apiKey);
-      await settingsScope.set('model', DEFAULTS.model);
+      const saved = await rpcConfig('set', {
+        patch: { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model },
+      });
+      configMirror = mergeConfig(saved as Partial<PromptConfig> | undefined);
     } catch (error) {
-      throw new Error(
-        `settings 重置失败: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new Error(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -150,7 +133,7 @@ export function apply(ctx: ClientContext) {
             saveConfig,
             resetConfig,
             getEpoch: () => configEpoch,
-            getSettingsSnapshot: () => settingsScope.getSnapshot(),
+            getSettingsSnapshot: () => ({ mirror: configMirror }),
           }),
         },
         SettingsRow,
