@@ -1,6 +1,7 @@
 /** dsh-prompt-optimizer 插件入口 — apply(ctx) */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import React from 'react';
 import type { Lang, PromptConfig } from './optimizer.js';
 import { DEFAULTS, mergeConfig } from './optimizer.js';
 import { NS, zh, en, langOf } from './locales.js';
@@ -57,6 +58,19 @@ export function apply(ctx: ClientContext) {
 
   // 4. 会话槽位：按钮 + 预览卡片
   ctx.inject(['slots', 'sessions'], (scope) => {
+    // 临时探针（定位后移除）：纯 div 条目，判定「input.right 槽位是否渲染」——
+    // 看到 'PO-RIGHT-OK' 说明槽位渲染 OK、问题在 OptimizeButton 组件；看不到则槽位/注册问题。
+    scope.slots.inject('conversation.input.right', () =>
+      scope.slots.register(
+        {
+          name: 'conversation.input.right',
+          id: 'prompt-optimizer-probe',
+          order: 99,
+          locale: NS,
+        },
+        () => React.createElement('span', { 'data-po-probe': '1', style: { fontSize: 10, color: '#888', padding: '0 4px' } }, 'PO-RIGHT-OK'),
+      ),
+    );
     scope.slots.inject('conversation.input.right', () =>
       scope.slots.register(
         {
