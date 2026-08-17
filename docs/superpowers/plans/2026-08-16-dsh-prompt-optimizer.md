@@ -2102,10 +2102,11 @@ git commit -m "feat: settings row with expandable API config form + Alt+O shortc
 npm run build
 dsh plugin --profile web add .        # 若 Task 1 结论为契约 β，则改为：dsh plugin --profile web add ./plugin
 ```
-编辑 `~/.dsh/profiles/web/cordis.patch.yml` 追加：
+编辑 `~/.dsh/profiles/web/cordis.patch.yml` 追加（**新建条目必须用 `insert:`**，覆盖式 {id,name} 对不存在的条目会 "patch: entry not found" 跳过）：
 ```yaml
-- id: prompt-optimizer
-  name: dsh-prompt-optimizer
+- insert:
+    - id: prompt-optimizer
+      name: dsh-prompt-optimizer
 ```
 重启 dsh web，刷新页面。
 

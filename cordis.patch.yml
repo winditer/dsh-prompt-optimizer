@@ -1,5 +1,7 @@
 # dsh-prompt-optimizer —— bundle 层入口声明（profile 的 dsh.profile.bundles 加载本包时应用）。
-# 语义（实证自 dsh-app-boot applyEntryPatches）：patch 条目 {id, name} 中的 name 被 loader
-# 用作 tree.import 的包名（entry.options.name），id 为 fiber/入口标识。
-- id: prompt-optimizer
-  name: dsh-prompt-optimizer
+# 语义（实证自 dsh-app-boot applyEntryPatches）：新建条目必须用 `insert:`（覆盖式 {id,name} 仅对
+# 已存在条目生效，否则 "patch: entry not found" 跳过）；name 被 loader 用作 tree.import 的包名
+# （entry.options.name = 图行 id = bundle 必须注册的 load id），id 为 fiber/入口标识。
+- insert:
+    - id: prompt-optimizer
+      name: dsh-prompt-optimizer
