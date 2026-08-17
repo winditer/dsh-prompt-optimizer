@@ -35,8 +35,10 @@ await esbuild.build({
 
 const bundle = readFileSync(outRaw, 'utf8');
 
+// 运行时约束（Task 6 实证）：bundle 的 load id 必须等于安装包名（图行 id = entry.options.name），
+// 否则 arrive() 抛出 "bundle loaded without registering <id>"。包名即 dsh-prompt-optimizer。
 const wrapped = `window.__ModuleLoader__.load({
-  id: "prompt-optimizer",
+  id: "dsh-prompt-optimizer",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;

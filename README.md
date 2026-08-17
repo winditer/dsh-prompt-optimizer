@@ -7,12 +7,17 @@
 npm run build
 dsh plugin --profile web add .        # 契约 α：直接 add .（契约 β 场景则改为：dsh plugin --profile web add ./plugin）
 ```
-编辑 `~/.dsh/profiles/web/cordis.patch.yml` 追加：
+`dsh plugin add .` 会按本包名（`dsh-prompt-optimizer`）写入 profile 依赖并把工作区链接进
+`~/.dsh/profiles/web/node_modules/`。随后确认/追加 profile 的入口声明（`~/.dsh/profiles/web/cordis.patch.yml`，与本体 `cordis.patch.yml` 一致）：
 ```yaml
 - id: prompt-optimizer
   name: dsh-prompt-optimizer
 ```
+并在 `~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles` 中加入 `"dsh-prompt-optimizer"`。
 重启 dsh web，刷新页面。
+
+> 运行时注意：bundle 的 `load({id})` 必须等于**安装包名**（`dsh-prompt-optimizer`）——
+> 图行 id = loader 入口的 `options.name`，`arrive()` 校验 bundle 恰注册该 id；本仓库 build 已按此产出。
 
 ## 使用
 1. 设置 → 通用设置 → Prompt 优化：填接口地址（默认 https://api.deepseek.com）、API Key、模型名（默认 deepseek-chat），保存

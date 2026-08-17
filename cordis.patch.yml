@@ -1,0 +1,5 @@
+# dsh-prompt-optimizer —— bundle 层入口声明（profile 的 dsh.profile.bundles 加载本包时应用）。
+# 语义（实证自 dsh-app-boot applyEntryPatches）：patch 条目 {id, name} 中的 name 被 loader
+# 用作 tree.import 的包名（entry.options.name），id 为 fiber/入口标识。
+- id: prompt-optimizer
+  name: dsh-prompt-optimizer

@@ -108,3 +108,8 @@ Loader 契约（`@deepseek-ai/dsh-client-modules/lib/client.js` 源码注释直�
 - 运行时服务键：插件源码 `export const inject = ['slots','sessions','locale','settingsScope']`（package.json 的 `dsh.client.inject` 仍为宿主侧包 id 清单，Task 6 安装时核对是否被 loader 消费）
 - 下一步为人工步骤：重启 dsh web 后按手工验证清单核对（清单见 README 或本项目 spec §8）
 - 已知边界注释指针：`src/index.ts` 的 configEpoch/pendingSelfBalance 回显收敛语义（含极少见的外部编辑竞争自愈说明）
+## 最终结论（Task 6 · 安装实证补充：load id 必须等于包名 + 安装修复记录）
+
+- **运行时硬约束（实证）**：`dsh-client-modules` 的 `arrive(row)` 校验「加载 bundle 后 `factories.has(row.id)`」；图行 id = loader 入口的 `entry.options.name`（patch 条目取 `name` 字段，`tree.import(options.name)` 按包名解析）。因此 **bundle 的 `window.__ModuleLoader__.load({id})` 必须等于安装包名**，而非任意自定义 id。所有现存 bundle（@deepseek-ai/dsh-client-runtime 等）均符合此约定。本仓库已将 build id 定为 `dsh-prompt-optimizer`（与包名一致）；设计文档/早期计划中的 `prompt-optimizer` id 仅作为入口/fiber 标识（patch 的 `id` 字段）与 slot id 前缀。
+- **安装修复记录**：Task 6 首次 `pnpm add /workspace`（经 `dsh plugin add .`）按旧包名 `dsh-plugin-desktop` 安装，**顶掉了 web profile 的宿主同名包**（profile deps 变成 `link:/Users/haifeng/Documents/dsh`，且裁剪 63 个包）。已修正为：① workspace 包名改为 `dsh-prompt-optimizer`（design 文档既定名）；② profile deps 还原宿主 `dsh-plugin-desktop: file:/…/profiles/node_modules/dsh-plugin-desktop`；③ profile 依赖/bundles 用 `dsh-prompt-optimizer` 替代废弃的 `dsh-skin-pack` 槽位（该槽位本就是指向本工作区的旧别名）；④ PROFILE `cordis.patch.yml` 的 skin-pack 条目替换为 prompt-optimizer 条目；⑤ workspace 新增 `cordis.patch.yml`（bundle 层入口声明）与 `lib/index.js`（节点侧最小 no-op 模块，令 fiber 健康激活）。
+- **ps**: `dsh plugin --profile web add .` 在 PATH 上无 node/全局 pnpm v10 时失败（ERR_PNPM_UNEXPECTED_STORE）——需把 profile 自带 pnpm v11（store v11 匹配）置于 PATH 首位执行。
