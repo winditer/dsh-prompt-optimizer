@@ -77,7 +77,9 @@ function injectCss() {
   color: var(--dsw-alias-label-primary);
 }
 .optiSettingsBtn.primary {
-  color: var(--dsw-alias-brand-primary-invert, #fff);
+  /* 不用 --dsw-alias-brand-primary-invert：其在暗色主题下会解析为深色 → 黑底黑字（用户实测）；
+     白字 + 主题主色（带稳定 fallback）保证任何主题下可读 */
+  color: #fff;
   background: var(--dsw-alias-brand-primary, #1677ff);
 }
 .optiSettingsErr {
