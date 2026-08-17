@@ -124,3 +124,21 @@ Loader 契约（`@deepseek-ai/dsh-client-modules/lib/client.js` 源码注释直�
 - **修复**：只保留一处 insert（插件自携带入口 = 工作区 cordis.patch.yml）；profile user 层置空数组并加防重复注释。
 - **教训**：`--dump-config` 只能验证 patch 组合，不能验证 loader 装载（duplicate/导入等）——GUI 重启后应以
   `/plugins/<name>/client.js` 状态码 + boot 图 entries 为准。
+
+## 目标 profile 澄清（SSD 结论）：用户界面 = desktop profile，web 安装为误判
+
+- **实证**：运行中 GUI 的 boot 图（dsh-better-sidebar/dsh-message-rail/dsh-sticky-note/dshmarket 等）与
+  `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 完全对应 → 桌面应用（Electron）内嵌
+  dsh 服务走 **desktop profile**；`~/.dsh/profiles/web` 的 bundles 无这些插件 → 早期「web profile 托管 GUI」结论错误。
+- 安装目标修正为 `--profile desktop`：deps `dsh-prompt-optimizer: link:/Users/haifeng/Documents/dsh` +
+  bundles 追加 + node_modules symlink（手工等效安装，因 desktop 的 supply-chain 策略
+  [minimumReleaseAge，存量 4 个 violation：modlens/agent-teams/data-agent/dshmarket@1.10.1] 拦下 pnpm install；
+  这与本次无关，属现网既有状态）。
+- **两次 boot 失败根因**（SSD 链）：
+  1. `duplicate loader entry id: prompt-optimizer`——bundle 层与 user 层重复 insert 同 id；修复：只留 bundle 层自声明。
+  2. `failed to import loader entry prompt-optimizer: Invalid or unexpected token`——我写的 lib/index.js 用
+     `#` 开头注释（shell/python 风），JS 中 `#` 是私有字段前缀 → 非法语法。修复：改 `//` 注释。
+  3. web profile 的 `file:` 依赖装的是**复制**（权限 600、不随工作区更新）→ 修复后仍陈旧 → 换成 `link:` symlink。
+- **验证手段教训**：CLI `--dump-config` 只组合 patch 列表，**不装载**（不 import、不查 duplicate）；
+  真正装载验证 = `dsh web --port 0`（web profile 无桌面服务会报宿主条目 pending，属预期）或直接重启桌面应用
+  后看 `/plugins/dsh-prompt-optimizer/client.js` 状态码与 boot 图条目。
