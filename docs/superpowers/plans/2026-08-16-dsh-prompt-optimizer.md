@@ -2102,12 +2102,9 @@ git commit -m "feat: settings row with expandable API config form + Alt+O shortc
 npm run build
 dsh plugin --profile web add .        # 若 Task 1 结论为契约 β，则改为：dsh plugin --profile web add ./plugin
 ```
-编辑 `~/.dsh/profiles/web/cordis.patch.yml` 追加（**新建条目必须用 `insert:`**，覆盖式 {id,name} 对不存在的条目会 "patch: entry not found" 跳过）：
-```yaml
-- insert:
-    - id: prompt-optimizer
-      name: dsh-prompt-optimizer
-```
+入口由本体 `cordis.patch.yml`（`insert:` 自声明，随包分发）提供；`~/.dsh/profiles/web/cordis.patch.yml`
+**不要**重复 insert 同 id（loader 装载抛 `duplicate loader entry id`）；`dsh.profile.bundles` 加入
+`"dsh-prompt-optimizer"`。覆盖配置才用 user 层覆盖式（{id,name} 覆盖要求目标已存在）。
 重启 dsh web，刷新页面。
 
 ## 使用

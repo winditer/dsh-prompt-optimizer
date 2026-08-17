@@ -8,13 +8,17 @@ npm run build
 dsh plugin --profile web add .        # 契约 α：直接 add .（契约 β 场景则改为：dsh plugin --profile web add ./plugin）
 ```
 `dsh plugin add .` 会按本包名（`dsh-prompt-optimizer`）写入 profile 依赖并把工作区链接进
-`~/.dsh/profiles/web/node_modules/`。随后确认/追加 profile 的入口声明（`~/.dsh/profiles/web/cordis.patch.yml`，与本体 `cordis.patch.yml` 一致，**新建条目必须用 `insert:`**）：
+`~/.dsh/profiles/web/node_modules/`。随后在 `~/.dsh/profiles/web/package.json` 的
+`dsh.profile.bundles` 中加入 `"dsh-prompt-optimizer"`（入口由本体 `cordis.patch.yml` 的
+`insert:` 自声明，见下）。注意：**user 层（`~/.dsh/profiles/web/cordis.patch.yml`）不要重复
+insert 同 id 条目**——loader 装载会抛 `duplicate loader entry id: prompt-optimizer` 导致整层
+失败、插件不进树；如需覆盖配置才在 user 层用覆盖式（`- id: prompt-optimizer` + `config`）。
+本体 `cordis.patch.yml`（入口声明，随包分发）：
 ```yaml
 - insert:
     - id: prompt-optimizer
       name: dsh-prompt-optimizer
 ```
-并在 `~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles` 中加入 `"dsh-prompt-optimizer"`。
 重启 dsh web，刷新页面。
 
 > 运行时注意：bundle 的 `load({id})` 必须等于**安装包名**（`dsh-prompt-optimizer`）——
