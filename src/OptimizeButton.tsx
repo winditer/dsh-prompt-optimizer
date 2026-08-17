@@ -45,19 +45,18 @@ function injectCss() {
 }
 
 /**
- * 读取当前草稿：优先取焦点 textarea（按钮点击/Alt+O 时输入框通常聚焦），
- * 否则回退到页面里用户可见的 composer textarea（data 属性渐进匹配）。
- * 不依赖会话标准 kit 的 input hook——实测 input.right 渲染时该标准 props 未提供，
- * 组件会因调用 undefined hook 崩溃被错误边界吞掉（PO-RIGHT-OK 探针可见而 ✨ 不可见）。
+ * 读取当前草稿：优先取焦点 textarea；否则回退到页面中「值非空」的 textarea
+ * （用户在输入的即当前草稿）。不依赖会话标准 kit 的 input hook——实测
+ * input.right 渲染时该标准 props 未提供，组件会因调用 undefined hook
+ * 崩溃被错误边界吞掉（PO-RIGHT-OK 探针可见而 ✨ 不可见）。
  */
 function readDraft(): string {
   const active = document.activeElement;
   if (active instanceof HTMLTextAreaElement) return active.value;
-  const fallback = document.querySelector<HTMLTextAreaElement>(
-    'textarea[data-dsh-composer-input], textarea[data-slot-area], div[role="textbox"][contenteditable="true"]',
-  );
-  if (fallback instanceof HTMLTextAreaElement) return fallback.value;
-  if (fallback instanceof HTMLElement) return fallback.textContent ?? '';
+  const all = document.querySelectorAll<HTMLTextAreaElement>('textarea');
+  for (const ta of all) {
+    if (ta.value.trim()) return ta.value;
+  }
   return '';
 }
 
@@ -68,12 +67,18 @@ export function OptimizeButton(props: OptimizeButtonProps) {
   const storeBusy = useStore ? useStore((s) => s.status) === 'optimizing' : false;
   const [localBusy, setLocalBusy] = useState(false);
   const busy = storeBusy || localBusy;
+  // mousedown 预读草稿：点击按钮瞬间焦点会切到按钮（activeElement 不再是 textarea），
+  // 但 mousedown 早于焦点切换——此刻读到的 activeElement 仍是输入框。
+  const draftRef = React.useRef('');
+  const syncDraft = React.useCallback(() => {
+    draftRef.current = readDraft();
+  }, []);
 
   useEffect(() => injectCss(), []);
 
   const handleClick = useCallback(() => {
     if (busy) return;
-    const draft = readDraft();
+    const draft = draftRef.current || readDraft();
     if (!draft.trim()) return;
     setLocalBusy(true);
     void runOptimize(actions, {
@@ -95,6 +100,8 @@ export function OptimizeButton(props: OptimizeButtonProps) {
       aria-busy={busy}
       disabled={busy}
       data-busy={busy}
+      onMouseDown={syncDraft}
+      onFocus={syncDraft}
       onClick={handleClick}
     >
       {busy ? '⏳' : '✨'}
