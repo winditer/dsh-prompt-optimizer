@@ -150,7 +150,7 @@ export function apply(ctx: ClientContext) {
             saveConfig,
             resetConfig,
             getEpoch: () => configEpoch,
-            getSettingsSnapshot: () => settingsScope.getSnapshot()?.value,
+            getSettingsSnapshot: () => settingsScope.getSnapshot(),
           }),
         },
         SettingsRow,
