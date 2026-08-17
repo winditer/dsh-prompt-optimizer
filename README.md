@@ -23,15 +23,14 @@ dsh plugin --profile desktop add .     # 按包名 dsh-prompt-optimizer 写入 d
 ```
 重启桌面应用（完全退出再打开），刷新页面。
 
-> **server half 依赖**：`lib/index.js`（node 侧）import `@deepseek-ai/dsh-settings` 与
-> `@deepseek-ai/schemastery`（注册 settings namespace 必需——未注册的 namespace 会被服务端
-> `SettingsProvider` 拒写，导致保存静默失败）。这两个包随桌面应用分发（app.asar.unpacked）但不在
-> 工作区 node_modules：请为它们建立 symlink 指向应用内的官方包（或确认装进了 profile 的可解析路径），
-> 否则 server 装载时报 `Cannot find package '@deepseek-ai/dsh-settings'`：
-> ```bash
-> ln -sfn "/Applications/DSH Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@deepseek-ai/dsh-settings" "node_modules/@deepseek-ai/dsh-settings"
-> ln -sfn "/Applications/DSH Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@deepseek-ai/schemastery" "node_modules/@deepseek-ai/schemastery"
-> ```
+> **配置持久化（实测架构）**：不走 client 的 settingsScope——桌面应用 host 的 settings 注册表只对
+> 内置/市场安装注册的 namespace 返回可用状态；手工装配进 profile 的插件没有该注册，
+> `getSnapshot()` 返回 `{status:"unavailable", mode:"host"}`、`set()` 静默失效（已实测定位）。
+> 改用与 dsh-sticky-note（先例、运行中）相同的自持模式：
+> - `lib/index.js`（server half）直接读写 `~/.dsh/prompt-optimizer-config.json`（node fs，无第三方依赖），
+>   并经 loopback RPC 通道 `/dsh-prompt-optimizer` 暴露 `get`/`set`；
+> - client 通过 `connection.rpc.call('/dsh-prompt-optimizer', ...)` 读写，配置镜像即时更新。
+> 配置文件与用户的其他 DSH 配置同目录，卸载时随插件清理。
 
 > 运行环境备注：桌面应用（Electron）内嵌的 dsh 服务走 **desktop profile**（其组合含
 > dsh-better-sidebar/dshmarket 等）；`dsh-plugin-desktop` 等宿主条目需要 `desktopRuntime`
@@ -49,9 +48,9 @@ dsh plugin --profile desktop add .     # 按包名 dsh-prompt-optimizer 写入 d
 3. 预览卡片：替换草稿 / 复制 / 重新优化 / 放弃
 
 ## 说明
-- API Key 明文保存在本地 DSH 配置中（settings scope `prompt-optimizer`）
+- API Key 明文保存在 `~/.dsh/prompt-optimizer-config.json`（与便签的 `sticky-note-config.json` 同款自持模式）
 - 接口需支持 CORS（自建网关可参考 one-api 类方案）
-- 卸载：移除 patch 行并 `rm -rf ~/.dsh/profiles/web/node_modules/dsh-prompt-optimizer`
+- 卸载：从 `~/.dsh/profiles/desktop/package.json`（deps + `dsh.profile.bundles`）移除并以 `pnpm --filter dsh-prompt-optimizer remove --dir ~/.dsh/profiles/desktop` 清除链接（或直接 `rm -rf ~/.dsh/profiles/desktop/node_modules/dsh-prompt-optimizer` + `~/.dsh/prompt-optimizer-config.json`）
 
 ## 开发
 - `npm run build`：esbuild 打包 `dist/client.js`

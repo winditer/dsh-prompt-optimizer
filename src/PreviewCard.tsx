@@ -71,7 +71,7 @@ function injectCss() {
   background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.14));
 }
 .dsh-po-card-btn.primary {
-  color: var(--dsw-alias-brand-primary-invert, #fff);
+  color: #fff;
   background: var(--dsw-alias-brand-primary, #1677ff);
 }
 `;

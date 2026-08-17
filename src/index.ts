@@ -128,7 +128,6 @@ export function apply(ctx: ClientContext) {
             saveConfig,
             resetConfig,
             getEpoch: () => configEpoch,
-            getSettingsSnapshot: () => ({ mirror: configMirror }),
           }),
         },
         SettingsRow,
