@@ -7,6 +7,7 @@ import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-
 import { validateSettingsForm } from '../src/settings-form-state.js';
 import { INITIAL_SETTINGS_FORM, reduceSettingsForm } from '../src/settings-form-state.js';
 import { classifyRefresh } from '../src/settings-epoch.js';
+import { getPreviewBusState, dispatchPreview, subscribePreviewBus } from '../src/preview-bus.js';
 
 async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
   await check('normalizeBaseUrl trims trailing slashes', () => {
@@ -396,6 +397,39 @@ async function runSettingsStoreTests(check: (name: string, fn: () => void | Prom
   });
 }
 
+async function runPreviewBusTests(check: (name: string, fn: () => void | Promise<void>) => void) {
+  // 模块级单例：先回到 idle，避免污染其他用例
+  dispatchPreview({ type: 'close' });
+
+  await check('preview-bus: dispatch drives state via reducer and notifies subscribers', () => {
+    let notified = 0;
+    const off = subscribePreviewBus(() => { notified += 1; });
+    try {
+      dispatchPreview({ type: 'begin' });
+      assert.strictEqual(getPreviewBusState().status, 'optimizing');
+      assert.strictEqual(notified, 1);
+      dispatchPreview({ type: 'show', result: 'x' });
+      assert.strictEqual(getPreviewBusState().status, 'preview');
+      assert.strictEqual(getPreviewBusState().result, 'x');
+      assert.strictEqual(notified, 2);
+    } finally {
+      off();
+      dispatchPreview({ type: 'close' });
+    }
+    assert.strictEqual(getPreviewBusState().status, 'idle');
+  });
+
+  await check('preview-bus: unsubscribed listener no longer notified', () => {
+    let notified = 0;
+    const off = subscribePreviewBus(() => { notified += 1; });
+    off();
+    dispatchPreview({ type: 'begin' });
+    assert.strictEqual(notified, 0);
+    dispatchPreview({ type: 'close' });
+    assert.strictEqual(getPreviewBusState().status, 'idle');
+  });
+}
+
 async function runEpochTests(check: (name: string, fn: () => void | Promise<void>) => void) {
   await check('classifyRefresh: external when no pending write', () => {
     const cur = { baseUrl: 'https://a.com', apiKey: 'k', model: 'm' };
@@ -460,6 +494,7 @@ export async function run(): Promise<boolean> {
   await runLocaleTests(check);
   await runOptimizeStoreTests(check);
   await runSettingsStoreTests(check);
+  await runPreviewBusTests(check);
   await runEpochTests(check);
 
   for (const r of results) console.log(r);
