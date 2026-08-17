@@ -1,7 +1,7 @@
 {
   "name": "dsh-prompt-optimizer",
   "version": "2.0.0",
-  "description": "DSH Desktop: an Electron shell composed as a DeepSeek Harness Cordis plugin",
+  "description": "输入框 prompt 优化插件：一键把草稿润色为更清晰、更结构化的 prompt（OpenAI 兼容 API，自配 Key，纯 client + 自持 RPC 配置）。",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -9,62 +9,16 @@
     "directory": "dsh-plugin-desktop"
   },
   "type": "module",
-  "main": "lib/main.js",
-  "types": "lib/types/index.d.ts",
-  "bin": {
-    "dsh-desktop": "lib/bin.js",
-    "dsh-plugin-desktop": "lib/bin.js"
-  },
   "exports": {
-    ".": {
-      "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
-    },
-    "./profile": {
-      "types": "./lib/types/profile.d.ts",
-      "default": "./lib/profile.js"
-    },
+    ".": "./lib/index.js",
     "./client": "./dist/client.js",
-    "./windows-pwsh-sandbox": {
-      "types": "./lib/types/windows-pwsh-sandbox.d.ts",
-      "default": "./lib/windows-pwsh-sandbox.js"
-    },
-    "./terminal": {
-      "types": "./lib/types/terminal.d.ts",
-      "default": "./lib/terminal.js"
-    },
-    "./pnpm": {
-      "types": "./lib/types/pnpm.d.ts",
-      "default": "./lib/pnpm.js"
-    },
-    "./profile-service": {
-      "types": "./lib/types/profile-service.d.ts",
-      "default": "./lib/profile-service.js"
-    },
-    "./profiles": {
-      "types": "./lib/types/profiles.d.ts",
-      "default": "./lib/profiles.js"
-    },
-    "./updates": {
-      "types": "./lib/types/updates.d.ts",
-      "default": "./lib/updates.js"
-    },
     "./package.json": "./package.json"
   },
   "files": [
-    "build/app-icon.png",
-    "build/app-icon-mac.png",
-    "build/tray-icon.svg",
-    "build/tray-icon*.png",
-    "cordis.patch.yml",
     "dist",
-    "docs/**",
-    "lib/**/*.js",
-    "lib/**/*.map",
-    "lib/types/**/*.d.ts",
-    "README.md",
-    "README.zh.md",
-    "README.i18n.yaml"
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -88,9 +42,7 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "dependencies": {
-    "react": "18.3.1"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/cordis-plugin-group": "1.0.1",
