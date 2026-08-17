@@ -1,22 +1,16 @@
 /** 输入栏右侧「优化」按钮 */
 
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import type { Lang, PromptConfig } from './optimizer.js';
-import { canTrigger } from './optimizer.js';
 import type { OptimizerActions } from './optimizer-store.js';
 import { runOptimize } from './optimizer-store.js';
 import type { PreviewState } from './preview-state.js';
 import { onOptimizeRequest } from './events.js';
 
-/** 会话标准 kit 提供的只读输入快照（input hook） */
-interface InputSnapshot {
-  draft: string;
-}
-
 export interface OptimizeButtonProps {
   t: (key: string) => string;
-  useInput: () => InputSnapshot;
-  useStore: <T>(selector: (s: PreviewState) => T) => T;
+  /** 会话 store 订阅（若渲染层提供）；提供时用于禁用态/繁忙态展示 */
+  useStore?: <T>(selector: (s: PreviewState) => T) => T;
   actions: OptimizerActions;
   getConfig: () => PromptConfig;
   getLang: () => Lang;
@@ -50,29 +44,46 @@ function injectCss() {
   document.head.appendChild(style);
 }
 
+/**
+ * 读取当前草稿：优先取焦点 textarea（按钮点击/Alt+O 时输入框通常聚焦），
+ * 否则回退到页面里用户可见的 composer textarea（data 属性渐进匹配）。
+ * 不依赖会话标准 kit 的 input hook——实测 input.right 渲染时该标准 props 未提供，
+ * 组件会因调用 undefined hook 崩溃被错误边界吞掉（PO-RIGHT-OK 探针可见而 ✨ 不可见）。
+ */
+function readDraft(): string {
+  const active = document.activeElement;
+  if (active instanceof HTMLTextAreaElement) return active.value;
+  const fallback = document.querySelector<HTMLTextAreaElement>(
+    'textarea[data-dsh-composer-input], textarea[data-slot-area], div[role="textbox"][contenteditable="true"]',
+  );
+  if (fallback instanceof HTMLTextAreaElement) return fallback.value;
+  if (fallback instanceof HTMLElement) return fallback.textContent ?? '';
+  return '';
+}
+
 export function OptimizeButton(props: OptimizeButtonProps) {
-  const { t, useInput, useStore, actions, getConfig, getLang } = props;
+  const { t, useStore, actions, getConfig, getLang } = props;
 
-  const input = useInput();
-  const status = useStore((s) => s.status);
-  const busy = status === 'optimizing';
-  const disabled = !canTrigger(input.draft, busy);
+  // 渲染层提供会话 store 时读取全局繁忙态；缺失则用组件本地 busy（不阻塞渲染）
+  const storeBusy = useStore ? useStore((s) => s.status) === 'optimizing' : false;
+  const [localBusy, setLocalBusy] = useState(false);
+  const busy = storeBusy || localBusy;
 
-  // 卸载时无需显式取消：请求在途时组件树已不渲染；会话切换后 store 实例随
-  // 会话 scope 清理（或冻结），runOptimize 的迟到写入无人订阅，无副作用。
   useEffect(() => injectCss(), []);
 
   const handleClick = useCallback(() => {
-    if (disabled) return;
+    if (busy) return;
+    const draft = readDraft();
+    if (!draft.trim()) return;
+    setLocalBusy(true);
     void runOptimize(actions, {
       getConfig,
       getLang,
-      getDraft: () => input.draft,
-    });
-  }, [disabled, actions, getConfig, getLang, input.draft]);
+      getDraft: () => draft,
+    }).finally(() => setLocalBusy(false));
+  }, [busy, actions, getConfig, getLang]);
 
-  // Alt+O 快捷键（index.ts 全局监听）→ 等效点击按钮；
-  // handleClick 随依赖变化重建，订阅始终指向最新闭包（含最新 draft/disabled）。
+  // Alt+O 快捷键（index.ts 全局监听）→ 等效点击按钮
   useEffect(() => onOptimizeRequest(handleClick), [handleClick]);
 
   return (
@@ -82,7 +93,7 @@ export function OptimizeButton(props: OptimizeButtonProps) {
       aria-label={t('button.aria')}
       title={t('button.aria')}
       aria-busy={busy}
-      disabled={disabled}
+      disabled={busy}
       data-busy={busy}
       onClick={handleClick}
     >
