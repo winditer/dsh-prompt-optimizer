@@ -23,6 +23,16 @@ dsh plugin --profile desktop add .     # 按包名 dsh-prompt-optimizer 写入 d
 ```
 重启桌面应用（完全退出再打开），刷新页面。
 
+> **server half 依赖**：`lib/index.js`（node 侧）import `@deepseek-ai/dsh-settings` 与
+> `@deepseek-ai/schemastery`（注册 settings namespace 必需——未注册的 namespace 会被服务端
+> `SettingsProvider` 拒写，导致保存静默失败）。这两个包随桌面应用分发（app.asar.unpacked）但不在
+> 工作区 node_modules：请为它们建立 symlink 指向应用内的官方包（或确认装进了 profile 的可解析路径），
+> 否则 server 装载时报 `Cannot find package '@deepseek-ai/dsh-settings'`：
+> ```bash
+> ln -sfn "/Applications/DSH Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@deepseek-ai/dsh-settings" "node_modules/@deepseek-ai/dsh-settings"
+> ln -sfn "/Applications/DSH Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@deepseek-ai/schemastery" "node_modules/@deepseek-ai/schemastery"
+> ```
+
 > 运行环境备注：桌面应用（Electron）内嵌的 dsh 服务走 **desktop profile**（其组合含
 > dsh-better-sidebar/dshmarket 等）；`dsh-plugin-desktop` 等宿主条目需要 `desktopRuntime`
 > 服务、只能在桌面应用进程内激活，所以**不要用裸 `dsh web` CLI 验证桌面插件**。
