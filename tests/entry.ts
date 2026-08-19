@@ -2,7 +2,7 @@
 
 import assert from 'node:assert';
 import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind, extractSseDelta, resolveSessionModel } from '../src/optimizer.js';
-import { prefixDelta, resolveHostSessionModel, runHostOptimize } from '../src/session-optimizer.js';
+import { prefixDelta, resolveHostSessionModel, runHostOptimize, streamHostOptimize } from '../src/session-optimizer.js';
 import { NS, zh, en, langOf } from '../src/locales.js';
 import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-state.js';
 import { validateSettingsForm } from '../src/settings-form-state.js';
@@ -386,6 +386,55 @@ async function runIntegrationTests(check: (name: string, fn: () => void | Promis
     assert.deepStrictEqual(deltas, ['好的，已优化']);
   });
 
+  await check('streamHostOptimize: SSE frames surface incremental deltas token by token', async () => {
+    const rpc = {
+      call: async (endpoint: string) => {
+        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'cmp-deepseek', model: 'm' } };
+        return { ok: true, value: true };
+      },
+    };
+    // 模拟真流式：多个 delta 帧分开发送（token 级）
+    const enc = new TextEncoder();
+    const frames = [
+      'event: start\ndata: {}\n\n',
+      'event: delta\ndata: 优\n\n',
+      'event: delta\ndata: 化\n\n',
+      'event: delta\ndata: 结\n\n',
+      'event: delta\ndata: 果\n\n',
+      'event: done\ndata: {}\n\n',
+    ];
+    const stream = new ReadableStream({
+      start(controller) {
+        let i = 0;
+        const timer = setInterval(() => {
+          if (i < frames.length) {
+            controller.enqueue(enc.encode(frames[i]));
+            i += 1;
+          } else {
+            clearInterval(timer);
+            controller.close();
+          }
+        }, 5);
+      },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: true, body: stream })) as typeof fetch;
+    try {
+      const deltas: string[] = [];
+      const result = await streamHostOptimize({
+        rpc: rpc as never,
+        text: 'x',
+        system: 's',
+        signal: new AbortController().signal,
+        onDelta: (t) => deltas.push(t),
+      });
+      assert.strictEqual(result, '优化结果');
+      assert.deepStrictEqual(deltas, ['优', '优化', '优化结', '优化结果']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   await check('integration: start without llm service errors cleanly', async () => {
     const handler = makeHandler({ get: () => undefined } as never);
     const start = await handler('optimize.start', { provider: 'p', model: 'm', text: 'x', system: '' });
@@ -532,21 +581,39 @@ async function runOptimizeStoreTests(check: (name: string, fn: () => void | Prom
     const rpc = {
       call: async (endpoint: string) => {
         if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'cmp-deepseek', model: 'm' } };
-        if (endpoint === 'optimize.start') return { ok: true, value: { taskId: 't' } };
-        if (endpoint === 'optimize.poll') return { ok: true, value: { done: true, text: '优化结果' } };
         return { ok: true, value: true };
       },
     };
-    await runOptimize({
+    // mock SSE stream: 分段 delta + done（无 fetch 的 node 环境）
+    const sseText = '优化结果';
+    const enc = new TextEncoder();
+    const frames = [
+      `event: start\ndata: {}\n\n`,
+      `event: delta\ndata: ${sseText}\n\n`,
+      `event: done\ndata: {}\n\n`,
+    ];
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const f of frames) controller.enqueue(enc.encode(f));
+        controller.close();
+      },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: true, body: stream })) as typeof fetch;
+    try {
+      await runOptimize({
       getConfig: () => ({ ...DEFAULTS, apiKey: '', useSessionModel: true }),
       getLang: () => 'zh',
       getDraft: () => '  草稿  ',
       host: { rpc: rpc as never },
     });
-    const st = getPreviewBusState();
-    assert.strictEqual(st.status, 'preview', 'host channel should reach preview without config');
-    assert.strictEqual(st.result, '优化结果');
-    dispatchPreview({ type: 'close' });
+      const st = getPreviewBusState();
+      assert.strictEqual(st.status, 'preview', 'host channel should reach preview without config');
+      assert.strictEqual(st.result, '优化结果');
+      dispatchPreview({ type: 'close' });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 }
 

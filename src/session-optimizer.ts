@@ -4,11 +4,11 @@
  * 渲染进程没有「一次性生成拿结果」的 RPC，也不该用 session.create/fork 创建后台会话
  * （后台会话不在前台不触发模型执行，实测「永远正在优化」）。正解取自 dsh-elf 的宿主
  * 服务面：server half（lib/index.js）持有 llm 与 agentDefaultModel 服务——
- *   sessionModel     → 当前会话/agent 默认模型（provider + model）
- *   optimize.start   → llm.stream 后台流式，增量累积到任务
- *   optimize.poll    → 取 { done, text }（接近 250ms 一次）
- *   optimize.abort   → 标记中止，后台流尽快停
- * client 经自有 RPC 通道（/dsh-prompt-optimizer）轮询增量呈现（近似流式）。
+ *   sessionModel       → 当前会话/agent 默认模型（provider + model）
+ *   optimize.stream    → SSE 真流式：llm.stream 每个 text-delta 即时推送（逐 token）
+ *   optimize.start     → 后台流式累积（降级方案）
+ *   optimize.poll      → 取 { done, text }（降级方案）
+ * client 经 HTTP SSE（/dsh-prompt-optimizer/api/optimize.stream）逐 token 呈现。
  */
 
 import type { Lang } from './optimizer.js';
@@ -123,6 +123,94 @@ export function prefixDelta(prev: string, next: string): string {
  * rpc.call 在同一流程的第二次调用会挂死（实测 sessionModel 成功、start 永不达），
  * 单次调用绕开该限制。卡片无逐字滚动（流式能力保留在 fetch 通道）。
  */
+export interface StreamHostOptimizeOptions {
+  rpc: HostRpc;
+  text: string;
+  system: string;
+  signal: AbortSignal;
+  onDelta(text: string): void;
+  onStep?(step: 'model' | 'start' | 'poll'): void;
+  timeoutMs?: number;
+}
+
+/** 解析 SSE 文本流：data: 行的内容逐一回调（
+
+ 分帧；JSON 帧为对象，否则原文）。 */
+async function readSse(response: Response, onData: (raw: string) => void): Promise<void> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('no-stream');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    for (;;) {
+      const idx = buffer.indexOf('\n\n');
+      if (idx === -1) break;
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (dataLine) onData(dataLine.slice(5).trim());
+    }
+  }
+}
+
+/**
+ * 宿主通道真流式：fetch SSE，逐 token onDelta。绕开 rpc.call（desktop 二次调用挂死），
+ * 也绕开轮询快照（快模型仍显一次性）。abort = signal + fetch abort。
+ */
+export async function streamHostOptimize(opts: StreamHostOptimizeOptions): Promise<string> {
+  const { rpc, text, system, signal, onDelta, onStep } = opts;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (signal.aborted) throw new Error('aborted');
+  onStep?.('model');
+  const session = await resolveHostSessionModel(rpc, opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS);
+  if (!session) throw new Error('host-unavailable');
+  onStep?.('start');
+
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal.addEventListener('abort', onAbort);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let out = '';
+  try {
+    const response = await fetch('/dsh-prompt-optimizer/api/optimize.stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: session.provider,
+        model: session.model,
+        text,
+        system,
+        ...(session.reasoningEffort ? { reasoningEffort: session.reasoningEffort } : {}),
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`http-${response.status}`);
+    onStep?.('poll');
+    await readSse(response, (raw) => {
+      if (raw === '{}' || raw === '[DONE]') return;
+      let parsed: string | Record<string, unknown> | null = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = raw;
+      }
+      if (typeof parsed === 'string') {
+        out += parsed;
+        onDelta(out);
+      }
+    });
+    // 服务端始终以 event:done 收尾，无显式错误帧即成功
+    if (signal.aborted) throw new Error('aborted');
+    return out;
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<string> {
   const { rpc, lang: _lang, text, system, signal, onDelta, onStep } = opts;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
