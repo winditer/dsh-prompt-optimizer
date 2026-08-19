@@ -107,7 +107,7 @@ export function OptimizeButton(props: OptimizeButtonProps) {
       getLang,
       getDraft: () => draft,
       getSessionModel,
-      getHost,
+      host: getHost?.(),
       getSessionId,
       trace: (msg) => console.warn('[dsh-prompt-optimizer]', msg),
     });

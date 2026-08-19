@@ -176,7 +176,7 @@ export function PreviewCard(props: PreviewCardProps) {
       getLang,
       getDraft: () => readComposerText(),
       getSessionModel,
-      getHost,
+      host: getHost?.() ?? undefined,
       getSessionId,
       trace: (msg) => {
         console.warn('[dsh-prompt-optimizer]', msg);
