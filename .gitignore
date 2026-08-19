@@ -4,3 +4,6 @@ dist/*
 !dist/client.js
 .tmp/
 pnpm-lock.yaml
+# 无关的本地目录（未跟踪，防止误提交）
+.dsh-vision-toolkit/
+pi-repo/
