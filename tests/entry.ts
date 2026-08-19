@@ -634,6 +634,20 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
   // 模块级单例：先回到 idle，避免污染其他用例
   dispatchPreview({ type: 'close' });
 
+  await check('preview-state: begin binds sessionId; card belongs to origin session', () => {
+    const begun = reducePreview(INITIAL_PREVIEW, { type: 'begin', sessionId: 'sess-a' });
+    assert.strictEqual(begun.status, 'optimizing');
+    assert.strictEqual(begun.sessionId, 'sess-a');
+    // draft/show 保持绑定；close 清空
+    const drafted = reducePreview(begun, { type: 'draft', text: 'x' });
+    assert.strictEqual(drafted.sessionId, 'sess-a');
+    const shown = reducePreview(begun, { type: 'show', result: 'R' });
+    assert.strictEqual(shown.sessionId, 'sess-a');
+    assert.strictEqual(reducePreview(shown, { type: 'close' }).sessionId, null);
+    // 无 sessionId 的 begin（未提供）→ null
+    assert.strictEqual(reducePreview(INITIAL_PREVIEW, { type: 'begin' }).sessionId, null);
+  });
+
   await check('preview-bus: dispatch drives state via reducer and notifies subscribers', () => {
     let notified = 0;
     const off = subscribePreviewBus(() => { notified += 1; });

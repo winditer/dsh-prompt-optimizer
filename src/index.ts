@@ -102,6 +102,7 @@ export function apply(ctx: ClientContext) {
             getLang: () => lang,
             getSessionModel,
             getHost,
+            getSessionId,
           }),
         },
         OptimizeButton,
@@ -120,6 +121,7 @@ export function apply(ctx: ClientContext) {
             openSettings: () => emitOpenSettingsRequest(),
             getSessionModel,
             getHost,
+            getSessionId,
           }),
         },
         PreviewCard,
@@ -138,7 +140,14 @@ export function apply(ctx: ClientContext) {
       useSessionModel: merged.useSessionModel,
     };
     try {
-      const saved = await rpcConfig('set', { patch: { baseUrl: written.baseUrl, apiKey: written.apiKey, model: written.model } });
+      const saved = await rpcConfig('set', {
+        patch: {
+          baseUrl: written.baseUrl,
+          apiKey: written.apiKey,
+          model: written.model,
+          useSessionModel: written.useSessionModel,
+        },
+      });
       configMirror = mergeConfig(saved as Partial<PromptConfig> | undefined);
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : String(error));

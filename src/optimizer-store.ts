@@ -45,6 +45,8 @@ export async function runOptimize(ctx: {
     parentSessionId: string;
     sessionId: string;
   };
+  /** 发起优化的会话 id（绑定预览窗口，切会话不跟随） */
+  getSessionId?(): string | null;
 }): Promise<void> {
   const config = ctx.getConfig();
   const draft = ctx.getDraft().trim();
@@ -52,7 +54,7 @@ export async function runOptimize(ctx: {
 
   // 并发把关：已有在途请求则丢弃本次触发（按钮 busy 态已禁用点击，这里是竞态的最后防线）
   if (activeController !== null) return;
-  dispatchPreview({ type: 'begin' });
+  dispatchPreview({ type: 'begin', sessionId: ctx.getSessionId?.() ?? null });
 
   const controller = new AbortController();
   activeController = controller; // 注册给 closePreview()，供卡片关闭时取消在途请求

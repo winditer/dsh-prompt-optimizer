@@ -151,10 +151,15 @@ export function PreviewCard(props: PreviewCardProps) {
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<number | null>(null);
 
+  // 预览窗口绑定发起会话：切换到别的会话时不跟随显示（切回发起会话恢复）
+  if (status !== 'idle' && state.sessionId !== null) {
+    const sid = getSessionId?.();
+    if (sid !== null && state.sessionId !== sid) return null;
+  }
   if (status === 'idle') return null;
 
   const retry = () => {
-    void runOptimize({ getConfig, getLang, getDraft: () => readComposerText(), getSessionModel, getHost });
+    void runOptimize({ getConfig, getLang, getDraft: () => readComposerText(), getSessionModel, getHost, getSessionId });
   };
 
   const replace = () => {

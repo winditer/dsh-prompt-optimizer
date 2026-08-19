@@ -59,12 +59,20 @@ function readDraft(): string {
 }
 
 export function OptimizeButton(props: OptimizeButtonProps) {
-  const { t, getConfig, getLang, getSessionModel, getHost } = props;
+  const { t, getConfig, getLang, getSessionModel, getHost, getSessionId } = props;
 
-  // 繁忙态：订阅模块级预览总线（替代会话 store props）
-  const [busy, setBusy] = useState(() => getPreviewBusState().status === 'optimizing');
+  // 繁忙态：订阅模块级预览总线（替代会话 store props）；
+  // 预览窗口绑定发起会话——切到别的会话时按钮不再 busy（各会话可独立发起优化）
+  const busyFor = () => {
+    const st = getPreviewBusState();
+    if (st.status !== 'optimizing') return false;
+    const sid = getSessionId?.();
+    return st.sessionId === null || st.sessionId === sid;
+  };
+  const [busy, setBusy] = useState(busyFor);
   useEffect(
-    () => subscribePreviewBus(() => setBusy(getPreviewBusState().status === 'optimizing')),
+    () => subscribePreviewBus(() => setBusy(busyFor())),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -87,6 +95,7 @@ export function OptimizeButton(props: OptimizeButtonProps) {
       getDraft: () => draft,
       getSessionModel,
       getHost,
+      getSessionId,
     });
   }, [busy, getConfig, getLang]);
 

@@ -11,6 +11,8 @@ export interface PreviewState {
   generation: number;
   /** 流式优化中的增量文本（optimizing 态实时更新；非流式全程为空串） */
   draft: string;
+  /** 发起优化的会话 id（null = 未绑定/全局）：预览窗口只属于该会话，切走不跟随 */
+  sessionId: string | null;
 }
 
 /** 只读共享常量：reducer 永不写回它或返回可变的新对象；消费者（Task 4 store 胶水）必须以 { ...INITIAL_PREVIEW } 为每会话种子 */
@@ -20,10 +22,11 @@ export const INITIAL_PREVIEW: PreviewState = {
   errorKind: null,
   generation: 0,
   draft: '',
+  sessionId: null,
 };
 
 export type PreviewAction =
-  | { type: 'begin' }
+  | { type: 'begin'; sessionId?: string | null }
   | { type: 'show'; result: string }
   | { type: 'fail'; kind: OptimizeErrorKind }
   | { type: 'guide' }
@@ -34,7 +37,14 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
   switch (action.type) {
     case 'begin':
       if (state.status === 'optimizing') return state;
-      return { ...state, status: 'optimizing', errorKind: null, draft: '', generation: state.generation + 1 };
+      return {
+        ...state,
+        status: 'optimizing',
+        errorKind: null,
+        draft: '',
+        sessionId: action.sessionId ?? null,
+        generation: state.generation + 1,
+      };
     case 'show':
       return state.status === 'optimizing'
         ? { ...state, status: 'preview', result: action.result, draft: '' }
