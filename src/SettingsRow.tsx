@@ -19,7 +19,6 @@ export interface SettingsRowProps {
   getHostStatus?: () => Promise<{ available: boolean; provider?: string; model?: string; error?: string } | null>;
 }
 
-import { BUILD_ID } from './build-id.js';
 
 const CSS_ID = 'dsh-prompt-optimizer/settings.css';
 function injectCss() {
@@ -189,7 +188,6 @@ export function SettingsRow(props: SettingsRowProps) {
                   color: hostStatus?.available ? 'var(--dsw-alias-state-success-primary, #2f9e63)' : 'var(--dsw-alias-state-error-primary, #d03050)',
                 }}
               >
-                <span style={{ color: 'var(--dsw-alias-text-secondary, #8c93a1)' }}>{` · build ${BUILD_ID}`}</span>
                 {hostStatus === null
                   ? t('settings.hostProbe')
                   : hostStatus.available

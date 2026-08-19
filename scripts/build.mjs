@@ -34,7 +34,6 @@ await esbuild.build({
 });
 
 // 注入构建 ID（当前 git 短哈希）
-const BUILD_ID = (
   await (async () => {
     try {
       const { execSync } = await import('node:child_process');
@@ -45,7 +44,6 @@ const BUILD_ID = (
   })()
 ).trim();
 
-const bundle = readFileSync(outRaw, 'utf8').split('__BUILD_ID__').join(BUILD_ID);
 
 // 运行时约束（Task 6 实证）：bundle 的 load id 必须等于安装包名（图行 id = entry.options.name），
 // 否则 arrive() 抛出 "bundle loaded without registering <id>"。包名即 dsh-prompt-optimizer。

@@ -91,8 +91,18 @@ export async function runOptimize(ctx: {
         onStep: (step) => dispatchPreview({ type: 'step', step }),
       }).then(
         async (finalText) => {
-          dispatchPreview({ type: 'draft', text: finalText });
-          await new Promise((r) => setTimeout(r, 400));
+          // 打字机效果：无论后端多快，最终文本都按节奏逐段呈现（保证流式观感）。
+          // poll 期间 onDelta 已实时刷新过 draft；此处对「首次 poll 即完成」的情况补足流式体验。
+          const totalMs = 1600;
+          const interval = 24;
+          const step = Math.max(1, Math.ceil(finalText.length / (totalMs / interval)));
+          let shown = 0;
+          while (shown < finalText.length) {
+            shown = Math.min(finalText.length, shown + step);
+            dispatchPreview({ type: 'draft', text: finalText.slice(0, shown) });
+            await new Promise((r) => setTimeout(r, interval));
+          }
+          await new Promise((r) => setTimeout(r, 150));
           dispatchPreview({ type: 'show', result: finalText });
         },
         (e) => {
