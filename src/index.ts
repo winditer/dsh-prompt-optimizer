@@ -46,9 +46,18 @@ export function apply(ctx: ClientContext) {
   };
   void loadConfig();
 
-  // 2.5 当前会话模型解析器（session.models RPC；失败返回 null → runOptimize 回退自定义 model）
-  const getSessionModel = (): Promise<string | null> =>
-    resolveSessionModel(ctx.connection.api as never);
+  // 2.5 当前会话模型解析器：先取当前会话 id（sessions.currentProvideInfo），
+  // 再查 session.models —— 不传 sessionId 时服务端回退默认模型而非会话模型（实测 bug）
+  const getSessionModel = async (): Promise<string | null> => {
+    const info = (
+      ctx.sessions as {
+        currentProvideInfo?: { getSnapshot?: () => { sessionId?: string } };
+      } | undefined
+    )?.currentProvideInfo?.getSnapshot?.();
+    const sessionId = info?.sessionId;
+    if (!sessionId) return null;
+    return resolveSessionModel(ctx.connection.api as never, { sessionId });
+  };
 
   // 3. 语言镜像
   let lang: Lang = langOf(ctx.locale.getLocale().active);

@@ -47,7 +47,7 @@ dsh plugin --profile web add file:/path/to/dsh-prompt-optimizer
 |---|---|---|
 | 接口地址 | `https://api.deepseek.com` | 任意 OpenAI 兼容 `/chat/completions` 端点 |
 | API Key | — | 你的密钥（需支持流式） |
-| 模型名 | `deepseek-chat` | 例如 `deepseek-v4-flash` 等 |
+| 模型名 | `deepseek-v4-flash` | 勾选「使用当前会话模型」（默认）时忽略此项 |
 
 配置保存于 `~/.dsh/prompt-optimizer-config.json`（与 DSH 其他配置同目录，卸载插件时一并清理）。
 

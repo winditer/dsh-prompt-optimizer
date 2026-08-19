@@ -159,12 +159,27 @@ export function SettingsRow(props: SettingsRowProps) {
     <div className="optiSettings">
       <div className="optiSettingsTitle" onClick={() => setExpanded((v) => !v)} style={{ cursor: 'pointer' }}>
         {t('settings.title')}
-        {!expanded && <span className="optiSettingsHint"> · {t(config.apiKey ? 'card.configured.hint' : 'card.unconfigured.hint').replace('{model}', modelLabel)}</span>}
+        {!expanded &&
+          (config.useSessionModel ? (
+            <span className="optiSettingsHint"> · {t('settings.sessionModelEnabled')}</span>
+          ) : (
+            <span className="optiSettingsHint"> · {t(config.apiKey ? 'card.configured.hint' : 'card.unconfigured.hint').replace('{model}', modelLabel)}</span>
+          ))}
       </div>
-      {!expanded && <div className="optiSettingsHint">{t('settings.clickToEdit')}</div>}
 
       {expanded && (
         <div className="optiSettingsForm">
+          <div className="optiSettingsField">
+            <label className="optiSettingsLabel">
+              <input
+                type="checkbox"
+                checked={values.useSessionModel}
+                onChange={(e) => actions.edit('useSessionModel', e.target.checked)}
+              />{' '}
+              {t('settings.useSessionModel')}
+            </label>
+            <span className="optiSettingsHint">{t('settings.useSessionModelHint')}</span>
+          </div>
           <div className="optiSettingsField">
             <label className="optiSettingsLabel" htmlFor="opti-base-url">{t('settings.baseUrl')}</label>
             <input
@@ -186,17 +201,6 @@ export function SettingsRow(props: SettingsRowProps) {
               autoComplete="off"
               onChange={(e) => actions.edit('apiKey', e.target.value)}
             />
-          </div>
-          <div className="optiSettingsField">
-            <label className="optiSettingsLabel">
-              <input
-                type="checkbox"
-                checked={values.useSessionModel}
-                onChange={(e) => actions.edit('useSessionModel', e.target.checked)}
-              />{' '}
-              {t('settings.useSessionModel')}
-            </label>
-            <span className="optiSettingsHint">{t('settings.useSessionModelHint')}</span>
           </div>
           <div className="optiSettingsField">
             <label className="optiSettingsLabel" htmlFor="opti-model">{t('settings.model')}</label>

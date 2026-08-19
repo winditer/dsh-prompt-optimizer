@@ -95,7 +95,7 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
 
   await check('buildRequestBody shape', () => {
     const body = buildRequestBody({ ...DEFAULTS, apiKey: 'k' }, '写个计划', 'zh') as Record<string, unknown>;
-    assert.strictEqual(body.model, 'deepseek-chat');
+    assert.strictEqual(body.model, DEFAULTS.model);
     assert.strictEqual((body as { stream: boolean }).stream, false);
     const messages = body.messages as Array<{ role: string; content: string }>;
     assert.strictEqual(messages.length, 2);

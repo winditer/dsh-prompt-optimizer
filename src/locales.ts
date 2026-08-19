@@ -35,12 +35,13 @@ export const zh = {
   'settings.model': '模型名',
   'settings.useSessionModel': '使用当前会话模型',
   'settings.useSessionModelHint': '开启时优化请求跟随会话模型；关闭后使用下方自定义模型名',
+  'settings.sessionModelEnabled': '已选择会话默认模型',
   'settings.save': '保存',
   'settings.reset': '恢复默认',
   'settings.saved': '已保存',
   'settings.saveFailed': '保存失败',
   'settings.resetFailed': '重置失败',
-  'settings.clickToEdit': '点击配置',
+  
 } as const;
 
 export const en: LocaleDict = {
@@ -74,12 +75,13 @@ export const en: LocaleDict = {
   'settings.model': 'Model',
   'settings.useSessionModel': 'Use current session model',
   'settings.useSessionModelHint': 'When on, optimization requests follow the session model; when off, the custom model below is used',
+  'settings.sessionModelEnabled': 'Session default model selected',
   'settings.save': 'Save',
   'settings.reset': 'Reset to defaults',
   'settings.saved': 'Saved',
   'settings.saveFailed': 'Save failed',
   'settings.resetFailed': 'Reset failed',
-  'settings.clickToEdit': 'Click to configure',
+  
 } as const;
 
 export type LocaleKey = keyof typeof zh;

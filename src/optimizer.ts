@@ -11,7 +11,7 @@ export interface PromptConfig {
 export const DEFAULTS: PromptConfig = {
   baseUrl: 'https://api.deepseek.com',
   apiKey: '',
-  model: 'deepseek-chat',
+  model: 'deepseek-v4-flash',
   useSessionModel: true,
 };
 
@@ -295,10 +295,13 @@ export async function resolveSessionModel(
         };
       }
     | undefined,
+  payload: unknown = {},
   signal?: AbortSignal,
 ): Promise<string | null> {
   try {
-    const res = await api?.sessions?.models?.({}, signal);
+    // 必须携带 sessionId：server 端按 request.payload.sessionId 查该会话已选择的模型，
+    // 缺失时回退默认（deepseek-v4-flash）而非会话模型（实测）
+    const res = await api?.sessions?.models?.(payload, signal);
     const m = res?.current?.model;
     return typeof m === 'string' && m.trim() ? m.trim() : null;
   } catch {
