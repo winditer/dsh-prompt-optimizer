@@ -18,7 +18,8 @@
     "dist",
     "lib",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "assets"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
