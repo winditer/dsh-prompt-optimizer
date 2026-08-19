@@ -59,6 +59,11 @@ function injectCss() {
   color: var(--dsw-alias-state-error-primary, #d03050);
   font-size: 13px;
 }
+.dsh-po-card-step {
+  color: var(--dsw-alias-text-secondary, #8c93a1);
+  font-size: 12px;
+  margin-left: 4px;
+}
 .dsh-po-card-err-detail {
   margin-top: 4px;
   color: var(--dsw-alias-text-secondary, #8c93a1);

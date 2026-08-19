@@ -52,6 +52,8 @@ export interface RunHostOptimizeOptions {
   system: string;
   signal: AbortSignal;
   onDelta: (text: string) => void;
+  /** 宿主通道步骤进度（卡片显示，定位卡点） */
+  onStep?: (step: 'model' | 'start' | 'poll') => void;
   intervalMs?: number;
   timeoutMs?: number;
   rpcTimeoutMs?: number;
@@ -103,17 +105,19 @@ export function prefixDelta(prev: string, next: string): string {
  * （abort → 通知 server 中止后抛错；整体超时兜底）。返回最终正文。
  */
 export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<string> {
-  const { rpc, lang: _lang, text, system, signal, onDelta } = opts;
+  const { rpc, lang: _lang, text, system, signal, onDelta, onStep } = opts;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const rpcTimeoutMs = opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
   if (signal.aborted) throw new Error('aborted');
 
   // 1. 会话默认模型（零配置；宿主服务不可用或无模型 → 明确失败，不静默）
+  onStep?.('model');
   const session = await resolveHostSessionModel(rpc, rpcTimeoutMs);
   if (!session) throw new Error('host-unavailable');
 
   // 2. 启动后台流式任务
+  onStep?.('start');
   const startedPayload: Record<string, unknown> = {
     provider: session.provider,
     model: session.model,
@@ -128,6 +132,7 @@ export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<str
   const taskId = start.value.taskId;
 
   // 3. 轮询增量直至 done
+  onStep?.('poll');
   const startedAt = Date.now();
   let last = '';
   try {

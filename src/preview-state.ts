@@ -15,6 +15,8 @@ export interface PreviewState {
   draft: string;
   /** 发起优化的会话 id（null = 未绑定/全局）：预览窗口只属于该会话，切走不跟随 */
   sessionId: string | null;
+  /** 宿主通道当前步骤（'model' | 'start' | 'poll' | null）：卡片显示进度，定位卡点 */
+  step: 'model' | 'start' | 'poll' | null;
 }
 
 /** 只读共享常量：reducer 永不写回它或返回可变的新对象；消费者（Task 4 store 胶水）必须以 { ...INITIAL_PREVIEW } 为每会话种子 */
@@ -26,6 +28,7 @@ export const INITIAL_PREVIEW: PreviewState = {
   generation: 0,
   draft: '',
   sessionId: null,
+  step: null,
 };
 
 export type PreviewAction =
@@ -34,7 +37,8 @@ export type PreviewAction =
   | { type: 'fail'; kind: OptimizeErrorKind; detail?: string }
   | { type: 'guide' }
   | { type: 'close' }
-  | { type: 'draft'; text: string };
+  | { type: 'draft'; text: string }
+  | { type: 'step'; step: 'model' | 'start' | 'poll' | null };
 
 export function reducePreview(state: PreviewState, action: PreviewAction): PreviewState {
   switch (action.type) {
@@ -47,6 +51,7 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
         errorDetail: null,
         draft: '',
         sessionId: action.sessionId ?? null,
+        step: 'model',
         generation: state.generation + 1,
       };
     case 'show':
@@ -63,6 +68,8 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
       return INITIAL_PREVIEW;
     case 'draft':
       return state.status === 'optimizing' ? { ...state, draft: action.text } : state;
+    case 'step':
+      return state.status === 'optimizing' ? { ...state, step: action.step } : state;
     default:
       return state;
   }

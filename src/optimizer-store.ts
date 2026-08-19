@@ -84,6 +84,7 @@ export async function runOptimize(ctx: {
         system: buildSystemPrompt(ctx.getLang()),
         signal: controller.signal,
         onDelta: (text) => dispatchPreview({ type: 'draft', text }),
+        onStep: (step) => dispatchPreview({ type: 'step', step }),
       }).then(
         (finalText) => dispatchPreview({ type: 'show', result: finalText }),
         (e) => {
