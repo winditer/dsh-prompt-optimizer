@@ -123,7 +123,7 @@ function errorKey(kind: string | null): string {
 }
 
 export function PreviewCard(props: PreviewCardProps) {
-  const { t, getConfig, getLang, openSettings, getSessionModel, getHost } = props;
+  const { t, getConfig, getLang, openSettings, getSessionModel, getHost, getSessionId } = props;
 
   // 订阅模块级预览总线（替代会话 store props）
   const [state, setState] = useState(() => getPreviewBusState());

@@ -22,6 +22,8 @@ import { dispatchPreview } from './preview-bus.js';
  * 注：模块级意味着多会话同时优化会互相让路——输入栏单会话聚焦的交互下可接受此简化。
  */
 let activeController: AbortController | null = null;
+/** 在途请求的发起会话（并发把关按会话：同会话防抖；异会话让路） */
+let activeSessionId: string | null = null;
 
 /** 关闭预览卡（并中止在途请求） */
 export function closePreview(): void {
@@ -29,6 +31,7 @@ export function closePreview(): void {
     activeController.abort();
     activeController = null;
   }
+  activeSessionId = null;
   dispatchPreview({ type: 'close' });
 }
 
@@ -52,12 +55,20 @@ export async function runOptimize(ctx: {
   const draft = ctx.getDraft().trim();
   if (!draft) return;
 
-  // 并发把关：已有在途请求则丢弃本次触发（按钮 busy 态已禁用点击，这里是竞态的最后防线）
-  if (activeController !== null) return;
-  dispatchPreview({ type: 'begin', sessionId: ctx.getSessionId?.() ?? null });
+  // 并发把关：同会话在途 → 丢弃本次触发（按钮 busy 已禁用点击，这里是竞态最后防线）；
+  // 切换会话后发起 → 中止旧请求让路（各会话可独立优化，宿主临时会话由 cancel 收尾）
+  const sessionId = ctx.getSessionId?.() ?? null;
+  if (activeController !== null) {
+    if (sessionId === activeSessionId) return;
+    activeController.abort();
+    activeController = null;
+    activeSessionId = null;
+  }
+  dispatchPreview({ type: 'begin', sessionId });
 
   const controller = new AbortController();
   activeController = controller; // 注册给 closePreview()，供卡片关闭时取消在途请求
+  activeSessionId = sessionId;
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -145,7 +156,10 @@ export async function runOptimize(ctx: {
     // 顶层兜底（宿主通道 reject 已被 .then 消化；此处保护 fetch 分支以外的意外异常）
     dispatchPreview({ type: 'fail', kind: toErrorKind(e).kind });
   } finally {
-    if (activeController === controller) activeController = null;
+    if (activeController === controller) {
+      activeController = null;
+      activeSessionId = null;
+    }
     clearTimeout(timer);
   }
 }
