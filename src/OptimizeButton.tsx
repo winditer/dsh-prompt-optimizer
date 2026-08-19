@@ -5,7 +5,6 @@ import type { Lang, PromptConfig } from './optimizer.js';
 import { runOptimize } from './optimizer-store.js';
 import { getPreviewBusState, subscribePreviewBus } from './preview-bus.js';
 import { onOptimizeRequest } from './events.js';
-import { probe } from './debug-probe.js';
 
 export interface OptimizeButtonProps {
   t: (key: string) => string;
@@ -88,20 +87,9 @@ export function OptimizeButton(props: OptimizeButtonProps) {
   useEffect(() => injectCss(), []);
 
   const handleClick = useCallback(() => {
-    probe.clicks += 1;
-    probe.lastClickAt = new Date().toISOString();
-    if (busy) {
-      probe.lastError = 'busy';
-      probe.lastStep = '';
-      return;
-    }
+    if (busy) return;
     const draft = draftRef.current || readDraft();
-    if (!draft.trim()) {
-      probe.lastError = 'empty-draft';
-      probe.lastStep = '';
-      return;
-    }
-    probe.lastError = '';
+    if (!draft.trim()) return;
     void runOptimize({
       getConfig,
       getLang,
@@ -109,7 +97,6 @@ export function OptimizeButton(props: OptimizeButtonProps) {
       getSessionModel,
       host: getHost?.(),
       getSessionId,
-      trace: (msg) => console.warn('[dsh-prompt-optimizer]', msg),
     });
   }, [busy, getConfig, getLang]);
 
@@ -117,32 +104,19 @@ export function OptimizeButton(props: OptimizeButtonProps) {
   useEffect(() => onOptimizeRequest(handleClick), [handleClick]);
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-      <button
-        type="button"
-        className="dsh-po-btn"
-        aria-label={t('button.aria')}
-        title={`${t('button.aria')} | clicks:${probe.clicks} step:${probe.lastStep || '-'} err:${probe.lastError || '-'}`}
-        aria-busy={busy}
-        disabled={busy}
-        data-busy={busy}
-        onMouseDown={syncDraft}
-        onFocus={syncDraft}
-        onClick={handleClick}
-      >
-        {busy ? '⏳' : '✨'}
-      </button>
-      <span
-        style={{
-          fontSize: '10px',
-          lineHeight: 1,
-          color: 'var(--dsw-alias-text-secondary, #8c93a1)',
-          userSelect: 'none',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {probe.clicks > 0 ? `c${probe.clicks}${probe.lastStep ? ` ${probe.lastStep}` : ''}` : ''}
-      </span>
-    </span>
+    <button
+      type="button"
+      className="dsh-po-btn"
+      aria-label={t('button.aria')}
+      title={t('button.aria')}
+      aria-busy={busy}
+      disabled={busy}
+      data-busy={busy}
+      onMouseDown={syncDraft}
+      onFocus={syncDraft}
+      onClick={handleClick}
+    >
+      {busy ? '⏳' : '✨'}
+    </button>
   );
 }

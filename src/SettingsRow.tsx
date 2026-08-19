@@ -20,7 +20,6 @@ export interface SettingsRowProps {
 }
 
 import { BUILD_ID } from './build-id.js';
-import { probe } from './debug-probe.js';
 
 const CSS_ID = 'dsh-prompt-optimizer/settings.css';
 function injectCss() {
@@ -98,11 +97,7 @@ function injectCss() {
 export function SettingsRow(props: SettingsRowProps) {
   const { t, useStore, actions, getConfig, saveConfig, resetConfig, getEpoch, getHostStatus } = props;
   const [hostStatus, setHostStatus] = useState<{ available: boolean; provider?: string; model?: string; error?: string } | null>(null);
-  const [, force] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => force((n) => n + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
+
   useEffect(() => {
     if (!getHostStatus) return;
     let alive = true;
@@ -188,12 +183,6 @@ export function SettingsRow(props: SettingsRowProps) {
         <div className="optiSettingsForm">
           {getHostStatus && (
             <div className="optiSettingsField" style={{ flexDirection: 'row' }}>
-              <span className="optiSettingsHint" style={{ color: 'var(--dsw-alias-text-secondary, #8c93a1)' }}>
-                clicks: {probe.clicks}
-                {probe.lastClickAt ? ` · ${probe.lastClickAt.slice(11, 19)}` : ''}
-                {probe.lastStep ? ` · step: ${probe.lastStep}` : ''}
-                {probe.lastError ? ` · err: ${probe.lastError}` : ''}
-              </span>
               <span
                 className="optiSettingsHint"
                 style={{

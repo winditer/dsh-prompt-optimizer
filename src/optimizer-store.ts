@@ -15,7 +15,6 @@ import {
 import { runHostOptimize, type HostRpc } from './session-optimizer.js';
 import { buildSystemPrompt } from './optimizer.js';
 import { dispatchPreview } from './preview-bus.js';
-import { probe } from './debug-probe.js';
 
 /**
  * 当前 in-flight 请求的控制器（模块级）：
@@ -50,16 +49,10 @@ export async function runOptimize(ctx: {
   };
   /** 发起优化的会话 id（绑定预览窗口，切会话不跟随） */
   getSessionId?(): string | null;
-  /** client 侧诊断埋点（写入 server 调试日志，定位卡点） */
-  trace?(msg: string): void;
 }): Promise<void> {
   const config = ctx.getConfig();
   const draft = ctx.getDraft().trim();
-  probe.lastStep = 'run';
-  probe.lastError = '';
-  ctx.trace?.(`runOptimize: called draftLen=${draft.length} useSessionModel=${config.useSessionModel}`);
   if (!draft) {
-    ctx.trace?.('runOptimize: empty draft -> return');
     return;
   }
 
@@ -68,15 +61,12 @@ export async function runOptimize(ctx: {
   const sessionId = ctx.getSessionId?.() ?? null;
   if (activeController !== null) {
     if (sessionId === activeSessionId) {
-      ctx.trace?.('runOptimize: same-session inflight -> debounce');
       return;
     }
-    ctx.trace?.('runOptimize: different session -> abort stale');
     activeController.abort();
     activeController = null;
     activeSessionId = null;
   }
-  ctx.trace?.('runOptimize: dispatch begin');
   dispatchPreview({ type: 'begin', sessionId });
 
   const controller = new AbortController();
@@ -91,7 +81,6 @@ export async function runOptimize(ctx: {
   try {
     // 会话模型模式（默认）：宿主临时对话通道 —— 零配置，无需 checkConfig
     if (config.useSessionModel && ctx.host) {
-      ctx.trace?.('runOptimize: host branch -> runHostOptimize');
       await runHostOptimize({
         rpc: ctx.host.rpc,
         lang: ctx.getLang(),
@@ -99,15 +88,16 @@ export async function runOptimize(ctx: {
         system: buildSystemPrompt(ctx.getLang()),
         signal: controller.signal,
         onDelta: (text) => dispatchPreview({ type: 'draft', text }),
-        onStep: (step) => {
-          probe.lastStep = step;
-          dispatchPreview({ type: 'step', step });
-        },
+        onStep: (step) => dispatchPreview({ type: 'step', step }),
         trace: (msg) => {
           console.warn('[dsh-prompt-optimizer]', msg);
         },
       }).then(
-        (finalText) => dispatchPreview({ type: 'show', result: finalText }),
+        async (finalText) => {
+          dispatchPreview({ type: 'delta', draft: finalText });
+          await new Promise((r) => setTimeout(r, 200));
+          dispatchPreview({ type: 'show', result: finalText });
+        },
         (e) => {
           const isAbort =
             (e instanceof DOMException && e.name === 'AbortError') ||
@@ -118,9 +108,7 @@ export async function runOptimize(ctx: {
             return;
           }
           const kind = toErrorKind(e).kind;
-          probe.lastStep = '';
-          probe.lastError = String((e as { message?: unknown })?.message ?? e);
-          dispatchPreview({ type: 'fail', kind, detail: probe.lastError });
+          dispatchPreview({ type: 'fail', kind, detail: String((e as { message?: unknown })?.message ?? e) });
         },
       );
       return;

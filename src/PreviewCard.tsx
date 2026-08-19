@@ -178,9 +178,6 @@ export function PreviewCard(props: PreviewCardProps) {
       getSessionModel,
       host: getHost?.() ?? undefined,
       getSessionId,
-      trace: (msg) => {
-        console.warn('[dsh-prompt-optimizer]', msg);
-      },
     });
   };
 
