@@ -9,6 +9,7 @@ import { validateSettingsForm } from '../src/settings-form-state.js';
 import { INITIAL_SETTINGS_FORM, reduceSettingsForm } from '../src/settings-form-state.js';
 import { classifyRefresh } from '../src/settings-epoch.js';
 import { getPreviewBusState, dispatchPreview, subscribePreviewBus } from '../src/preview-bus.js';
+import { runOptimize } from '../src/optimizer-store.js';
 
 async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
   await check('normalizeBaseUrl trims trailing slashes', () => {
@@ -406,6 +407,30 @@ async function runOptimizeStoreTests(check: (name: string, fn: () => void | Prom
     assert.strictEqual(canOptimizeFrom('error'), true);
     assert.strictEqual(canOptimizeFrom('guide'), true);
     assert.strictEqual(canOptimizeFrom('optimizing'), false);
+  });
+
+  await check('runOptimize: host channel runs with ZERO config — empty apiKey must not trigger guide', async () => {
+    dispatchPreview({ type: 'close' });
+    const api = {
+      create: async () => undefined,
+      models: async () => ({ current: { provider: 'deepseek-official', model: 'm' } }),
+      selectModel: async () => undefined,
+      prompt: async () => ({ accepted: true }),
+      cancel: async () => undefined,
+      history: async () => ({
+        events: [{ event: { type: 'assistant.message', seq: 1, data: { content: [{ type: 'text', text: '优化结果' }] } } }],
+      }),
+    };
+    await runOptimize({
+      getConfig: () => ({ ...DEFAULTS, apiKey: '', useSessionModel: true }),
+      getLang: () => 'zh',
+      getDraft: () => '  草稿  ',
+      host: { api: api as never, parentSessionId: 'parent-1', sessionId: 'po-optimizer' },
+    });
+    const st = getPreviewBusState();
+    assert.strictEqual(st.status, 'preview', 'host channel should reach preview without config');
+    assert.strictEqual(st.result, '优化结果');
+    dispatchPreview({ type: 'close' });
   });
 }
 

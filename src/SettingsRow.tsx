@@ -159,7 +159,12 @@ export function SettingsRow(props: SettingsRowProps) {
     <div className="optiSettings">
       <div className="optiSettingsTitle" onClick={() => setExpanded((v) => !v)} style={{ cursor: 'pointer' }}>
         {t('settings.title')}
-        {!expanded && <span className="optiSettingsHint"> · {t('settings.sessionModelEnabled')}</span>}
+        {!expanded &&
+          (config.useSessionModel ? (
+            <span className="optiSettingsHint"> · {t('settings.sessionModelEnabled')}</span>
+          ) : (
+            <span className="optiSettingsHint"> · {t(config.apiKey ? 'card.configured.hint' : 'card.unconfigured.hint').replace('{model}', modelLabel)}</span>
+          ))}
       </div>
 
       {expanded && (
@@ -182,6 +187,7 @@ export function SettingsRow(props: SettingsRowProps) {
               className="optiSettingsInput"
               value={values.baseUrl}
               placeholder={DEFAULTS.baseUrl}
+              disabled={values.useSessionModel}
               onChange={(e) => actions.edit('baseUrl', e.target.value)}
             />
           </div>
@@ -194,6 +200,7 @@ export function SettingsRow(props: SettingsRowProps) {
               value={values.apiKey}
               placeholder="sk-…"
               autoComplete="off"
+              disabled={values.useSessionModel}
               onChange={(e) => actions.edit('apiKey', e.target.value)}
             />
           </div>

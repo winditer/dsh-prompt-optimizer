@@ -32,7 +32,7 @@ export function closePreview(): void {
   dispatchPreview({ type: 'close' });
 }
 
-/** 优化编排：配置缺失 → guide；草稿空 → 直接返回；并发 → 丢弃；超时/取消 → timeout 或静默 */
+/** 优化编排：宿主通道（零配置）→ 草稿空 → 直接返回；配置缺失（fetch 通道）→ guide；并发 → 丢弃；超时/取消 → timeout 或静默 */
 export async function runOptimize(ctx: {
   getConfig(): PromptConfig;
   getLang(): Lang;
@@ -47,10 +47,6 @@ export async function runOptimize(ctx: {
   };
 }): Promise<void> {
   const config = ctx.getConfig();
-  if (!checkConfig(config).ok) {
-    dispatchPreview({ type: 'guide' });
-    return;
-  }
   const draft = ctx.getDraft().trim();
   if (!draft) return;
 
@@ -67,7 +63,7 @@ export async function runOptimize(ctx: {
   }, REQUEST_TIMEOUT_MS);
 
   try {
-    // 会话模型模式（默认）：宿主临时对话通道，零配置
+    // 会话模型模式（默认）：宿主临时对话通道 —— 零配置，无需 checkConfig
     if (config.useSessionModel && ctx.host) {
       await runHostOptimize({
         api: ctx.host.api,
@@ -91,6 +87,12 @@ export async function runOptimize(ctx: {
           dispatchPreview({ type: 'fail', kind: toErrorKind(e).kind });
         },
       );
+      return;
+    }
+
+    // fetch 通道（自定义模型/宿主不可用降级）才要求配置
+    if (!checkConfig(config).ok) {
+      dispatchPreview({ type: 'guide' });
       return;
     }
 
