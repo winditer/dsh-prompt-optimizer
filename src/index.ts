@@ -46,17 +46,39 @@ export function apply(ctx: ClientContext) {
   };
   void loadConfig();
 
-  // 2.5 当前会话模型解析器：先取当前会话 id（sessions.currentProvideInfo），
+  // 2.5 当前会话解析：先取激活会话 id（sessions.currentProvideInfo），
   // 再查 session.models —— 不传 sessionId 时服务端回退默认模型而非会话模型（实测 bug）
-  const getSessionModel = async (): Promise<string | null> => {
+  const getActiveSession = (): string | null => {
     const info = (
       ctx.sessions as {
         currentProvideInfo?: { getSnapshot?: () => { sessionId?: string } };
       } | undefined
     )?.currentProvideInfo?.getSnapshot?.();
     const sessionId = info?.sessionId;
+    return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null;
+  };
+  const getSessionModel = async (): Promise<string | null> => {
+    const sessionId = getActiveSession();
     if (!sessionId) return null;
     return resolveSessionModel(ctx.connection.api as never, { sessionId });
+  };
+
+  // 2.6 宿主通道（临时对话 + 当前会话模型，零配置）：
+  // 可复用的固定临时会话承载优化；模型继承当前会话（selectModel），
+  // 结果经 session.history 轮询增量呈现（近似流式）
+  const PO_HOST_SESSION_ID = 'po-optimizer';
+  const hostApi = (ctx.connection.api as never) as {
+    create(p: { sessionId: string }): Promise<unknown>;
+    selectModel(p: { sessionId: string; provider: string; model: string }): Promise<unknown>;
+    prompt(p: { sessionId: string; mode: 'queue'; content: Array<{ type: 'text'; text: string }> }): Promise<unknown>;
+    history(p: { sessionId: string }): Promise<{ events?: unknown }>;
+    cancel(p: { sessionId: string }): Promise<unknown>;
+    models(p: { sessionId: string }): Promise<{ current?: { provider?: string; model?: string } } | null>;
+  };
+  const getHost = (): { api: typeof hostApi; parentSessionId: string; sessionId: string } | null => {
+    const parentSessionId = getActiveSession();
+    if (!parentSessionId) return null;
+    return { api: hostApi, parentSessionId, sessionId: PO_HOST_SESSION_ID };
   };
 
   // 3. 语言镜像
@@ -78,6 +100,7 @@ export function apply(ctx: ClientContext) {
             getConfig: () => configMirror,
             getLang: () => lang,
             getSessionModel,
+            getHost,
           }),
         },
         OptimizeButton,
@@ -95,6 +118,7 @@ export function apply(ctx: ClientContext) {
             getLang: () => lang,
             openSettings: () => emitOpenSettingsRequest(),
             getSessionModel,
+            getHost,
           }),
         },
         PreviewCard,

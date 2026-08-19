@@ -12,6 +12,7 @@ import {
   type OptimizeErrorKind,
   type PromptConfig,
 } from './optimizer.js';
+import { runHostOptimize, type HostSessionApi } from './session-optimizer.js';
 import { dispatchPreview } from './preview-bus.js';
 
 /**
@@ -38,6 +39,12 @@ export async function runOptimize(ctx: {
   getDraft(): string;
   /** 解析当前会话模型（useSessionModel 开启时优先），不可得时返回 null（回退自定义 model） */
   getSessionModel?(): Promise<string | null>;
+  /** 宿主通道（useSessionModel 开启时用）：临时对话 + 当前会话模型，零配置 */
+  host?: {
+    api: HostSessionApi;
+    parentSessionId: string;
+    sessionId: string;
+  };
 }): Promise<void> {
   const config = ctx.getConfig();
   if (!checkConfig(config).ok) {
@@ -46,13 +53,6 @@ export async function runOptimize(ctx: {
   }
   const draft = ctx.getDraft().trim();
   if (!draft) return;
-  // 模型解析：useSessionModel（默认）→ 当前会话模型；否则/不可得 → 自定义 model
-  let model = config.model;
-  if (config.useSessionModel) {
-    const sessionModel = await ctx.getSessionModel?.();
-    if (sessionModel) model = sessionModel;
-  }
-  const effective = { ...config, model };
 
   // 并发把关：已有在途请求则丢弃本次触发（按钮 busy 态已禁用点击，这里是竞态的最后防线）
   if (activeController !== null) return;
@@ -66,38 +66,79 @@ export async function runOptimize(ctx: {
     controller.abort();
   }, REQUEST_TIMEOUT_MS);
 
-  // 展示累积：正文优先；正文尚未出现（v4 系先输出长段推理）时展示推理过程，让流式立即可见
-  let reasoning = '';
-  let content = '';
-  let shown = '';
   try {
-    const result = await optimizeStream({
-      config: effective,
-      text: draft,
-      lang: ctx.getLang(),
-      signal: controller.signal,
-      onEvent: (delta) => {
-        if (delta.kind === 'content') {
-          content += delta.text;
-          shown = content;
-        } else {
-          reasoning += delta.text;
-          shown = reasoning;
-        }
-        dispatchPreview({ type: 'draft', text: shown });
-      },
-    });
-    dispatchPreview({ type: 'show', result });
-  } catch (e) {
-    // 先判定中止：用户/组件取消与超时都表现为 AbortError；仅超时写入错误态
-    const isAbort =
-      (e instanceof DOMException && e.name === 'AbortError') ||
-      (typeof (e as { name?: unknown } | null)?.name === 'string' &&
-        (e as { name: string }).name === 'AbortError');
-    if (isAbort) {
-      if (timedOut) dispatchPreview({ type: 'fail', kind: 'timeout' as OptimizeErrorKind });
+    // 会话模型模式（默认）：宿主临时对话通道，零配置
+    if (config.useSessionModel && ctx.host) {
+      await runHostOptimize({
+        api: ctx.host.api,
+        parentSessionId: ctx.host.parentSessionId,
+        sessionId: ctx.host.sessionId,
+        lang: ctx.getLang(),
+        text: draft,
+        signal: controller.signal,
+        onDelta: (text) => dispatchPreview({ type: 'draft', text }),
+      }).then(
+        (finalText) => dispatchPreview({ type: 'show', result: finalText }),
+        (e) => {
+          const isAbort =
+            (e instanceof DOMException && e.name === 'AbortError') ||
+            (typeof (e as { name?: unknown } | null)?.name === 'string' &&
+              (e as { name: string }).name === 'AbortError');
+          if (isAbort) {
+            if (timedOut) dispatchPreview({ type: 'fail', kind: 'timeout' as OptimizeErrorKind });
+            return;
+          }
+          dispatchPreview({ type: 'fail', kind: toErrorKind(e).kind });
+        },
+      );
       return;
     }
+
+    // 自定义模型模式：浏览器 fetch 直连自配 API（流式）
+    // 模型解析：useSessionModel（默认）→ 当前会话模型（仅作 model 名回退使用）；否则 → 自定义 model
+    let model = config.model;
+    if (config.useSessionModel) {
+      const sessionModel = await ctx.getSessionModel?.();
+      if (sessionModel) model = sessionModel;
+    }
+    const effective = { ...config, model };
+
+    // 展示累积：正文优先；正文尚未出现（v4 系先输出长段推理）时展示推理过程，让流式立即可见
+    let reasoning = '';
+    let content = '';
+    let shown = '';
+    try {
+      const result = await optimizeStream({
+        config: effective,
+        text: draft,
+        lang: ctx.getLang(),
+        signal: controller.signal,
+        onEvent: (delta) => {
+          if (delta.kind === 'content') {
+            content += delta.text;
+            shown = content;
+          } else {
+            reasoning += delta.text;
+            shown = reasoning;
+          }
+          dispatchPreview({ type: 'draft', text: shown });
+        },
+      });
+      dispatchPreview({ type: 'show', result });
+    } catch (e) {
+      // 先判定中止：用户/组件取消与超时都表现为 AbortError；仅超时写入错误态
+      const isAbort =
+        (e instanceof DOMException && e.name === 'AbortError') ||
+        (typeof (e as { name?: unknown } | null)?.name === 'string' &&
+          (e as { name: string }).name === 'AbortError');
+      if (isAbort) {
+        if (timedOut) dispatchPreview({ type: 'fail', kind: 'timeout' as OptimizeErrorKind });
+        return;
+      }
+      dispatchPreview({ type: 'fail', kind: toErrorKind(e).kind });
+    }
+  } catch (e) {
+    // 顶层兜底（宿主通道 reject 已被 .then 消化；此处保护 fetch 分支以外的意外异常）
     dispatchPreview({ type: 'fail', kind: toErrorKind(e).kind });
   } finally {
     if (activeController === controller) activeController = null;

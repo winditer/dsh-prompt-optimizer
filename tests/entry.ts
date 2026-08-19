@@ -2,6 +2,7 @@
 
 import assert from 'node:assert';
 import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind, extractSseDelta, resolveSessionModel } from '../src/optimizer.js';
+import { collectTexts, foldSessionText, prefixDelta, runHostOptimize } from '../src/session-optimizer.js';
 import { NS, zh, en, langOf } from '../src/locales.js';
 import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-state.js';
 import { validateSettingsForm } from '../src/settings-form-state.js';
@@ -464,6 +465,101 @@ async function runSettingsStoreTests(check: (name: string, fn: () => void | Prom
 }
 
 async function runPreviewBusTests(check: (name: string, fn: () => void | Promise<void>) => void) {
+  await check('host channel: text folding skips user events, orders by seq, collects text blocks', () => {
+    assert.strictEqual(foldSessionText(undefined), '');
+    assert.strictEqual(foldSessionText([]), '');
+    const events = [
+      { event: { type: 'user.message', seq: 1, data: { role: 'user', content: [{ type: 'text', text: '请优化：XX' }] } } },
+      { event: { type: 'assistant.message', seq: 3, data: { role: 'assistant', content: [{ type: 'text', text: '你好' }, { type: 'text', text: '世界' }] } } },
+      { event: { type: 'assistant.delta', seq: 2, data: { role: 'assistant', content: [{ type: 'text', text: 'HELLO' }] } } },
+      { event: { type: 'tool.event', seq: 4, data: { content: 'x' } } },
+    ];
+    // 非消息类事件忽略，且按 seq 排序
+    assert.strictEqual(foldSessionText(events), 'HELLO你好世界');
+    // user 事件即使含 text 也被跳过
+    assert.strictEqual(
+      foldSessionText([{ event: { type: 'user.message', seq: 1, data: { role: 'user', text: 'user-echo' } } }]),
+      '',
+    );
+  });
+
+  await check('host channel: prefixDelta computes incremental suffix', () => {
+    assert.strictEqual(prefixDelta('', 'abc'), 'abc');
+    assert.strictEqual(prefixDelta('ab', 'abc'), 'c');
+    assert.strictEqual(prefixDelta('abcd', 'abc'), '');
+    assert.strictEqual(prefixDelta('我们', '我们的'), '的');
+  });
+
+  await check('host channel: runHostOptimize polls history, streams deltas, settles', async () => {
+    let createCalls = 0;
+    let selectCalls = 0;
+    let promptCalls = 0;
+    let cancelCalls = 0;
+    let historyCount = 0;
+    const api = {
+      create: async () => { createCalls += 1; throw new Error('already-exists'); },
+      models: async () => ({ current: { provider: 'deepseek-official', model: 'deepseek-v4-flash-cmp' } }),
+      selectModel: async () => { selectCalls += 1; },
+      prompt: async () => { promptCalls += 1; return { accepted: true }; },
+      cancel: async () => { cancelCalls += 1; },
+      history: async () => {
+        historyCount += 1;
+        const progress = Math.min(historyCount, 3);
+        const events = [];
+        for (let i = 0; i < progress; i += 1) {
+          events.push({ event: { type: 'assistant.message', seq: i + 1, data: { content: [{ type: 'text', text: `tok${i + 1}` }] } } });
+        }
+        return { events };
+      },
+    };
+    const deltas: string[] = [];
+    const result = await runHostOptimize({
+      api: api as never,
+      parentSessionId: 'parent-1',
+      sessionId: 'po-optimizer',
+      lang: 'zh',
+      text: '草稿',
+      signal: new AbortController().signal,
+      onDelta: (text) => deltas.push(text),
+      intervalMs: 1,
+      timeoutMs: 5000,
+      settleRounds: 2,
+    });
+    assert.strictEqual(createCalls, 1);
+    assert.strictEqual(promptCalls, 1);
+    assert.strictEqual(selectCalls, 1);
+    // 轮询稳定增长后 settle 两轮无变化结束
+    assert.ok(historyCount >= 5, `history polled many times, got ${historyCount}`);
+    assert.strictEqual(result, 'tok1tok2tok3');
+    assert.deepStrictEqual(deltas, ['tok1', 'tok1tok2', 'tok1tok2tok3']);
+    assert.strictEqual(cancelCalls, 0);
+  });
+
+  await check('host channel: abort cancels the host session', async () => {
+    const controller = new AbortController();
+    let cancelCalls = 0;
+    const api = {
+      create: async () => undefined,
+      prompt: async () => ({ accepted: true }),
+      history: async () => ({ events: [{ event: { type: 'assistant.message', seq: 1, data: { content: [] } } }] }),
+      cancel: async () => { cancelCalls += 1; },
+    };
+    const run = runHostOptimize({
+      api: api as never,
+      parentSessionId: 'p',
+      sessionId: 'po-optimizer',
+      lang: 'zh',
+      text: 'x',
+      signal: controller.signal,
+      onDelta: () => undefined,
+      intervalMs: 5,
+      timeoutMs: 50_000,
+    });
+    setTimeout(() => controller.abort(), 10);
+    await assert.rejects(run, /aborted/);
+    assert.strictEqual(cancelCalls, 1);
+  });
+
   // 模块级单例：先回到 idle，避免污染其他用例
   dispatchPreview({ type: 'close' });
 
