@@ -13,6 +13,7 @@ export interface PreviewCardProps {
   openSettings: () => void;
   getSessionModel?: () => Promise<string | null>;
   getHost?: () => { api: unknown; parentSessionId: string; sessionId: string } | null;
+  getSessionId?: () => string | null;
 }
 
 const CSS_ID = 'dsh-prompt-optimizer/card.css';

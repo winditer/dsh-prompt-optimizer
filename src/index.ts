@@ -63,6 +63,9 @@ export function apply(ctx: ClientContext) {
     return resolveSessionModel(ctx.connection.api as never, { sessionId });
   };
 
+  // 2.5b 预览窗口会话绑定：卡片只在发起会话显示（切走不跟随）
+  const getSessionId = (): string | null => getActiveSession();
+
   // 2.6 宿主通道（临时对话 + 当前会话模型，零配置）：
   // 可复用的固定临时会话承载优化；模型继承当前会话（selectModel），
   // 结果经 session.history 轮询增量呈现（近似流式）
