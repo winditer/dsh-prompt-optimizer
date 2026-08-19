@@ -129,14 +129,16 @@ export interface StreamHostOptimizeOptions {
   system: string;
   signal: AbortSignal;
   onDelta(text: string): void;
+  onReasoning?(text: string): void;
   onStep?(step: 'model' | 'start' | 'poll'): void;
   timeoutMs?: number;
 }
 
-/** 解析 SSE 文本流：data: 行的内容逐一回调（
-
- 分帧；JSON 帧为对象，否则原文）。 */
-async function readSse(response: Response, onData: (raw: string) => void): Promise<void> {
+/** 解析 SSE 帧：返回 { event, data }（\n\n 分帧）。 */
+async function readSseFrames(
+  response: Response,
+  onFrame: (event: string, data: string) => void,
+): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('no-stream');
   const decoder = new TextDecoder();
@@ -150,8 +152,13 @@ async function readSse(response: Response, onData: (raw: string) => void): Promi
       if (idx === -1) break;
       const frame = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 2);
-      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
-      if (dataLine) onData(dataLine.slice(5).trim());
+      let event = 'message';
+      let data = '';
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data = line.slice(5).trim();
+      }
+      onFrame(event, data);
     }
   }
 }
@@ -161,7 +168,7 @@ async function readSse(response: Response, onData: (raw: string) => void): Promi
  * 也绕开轮询快照（快模型仍显一次性）。abort = signal + fetch abort。
  */
 export async function streamHostOptimize(opts: StreamHostOptimizeOptions): Promise<string> {
-  const { rpc, text, system, signal, onDelta, onStep } = opts;
+  const { rpc, text, system, signal, onDelta, onReasoning, onStep } = opts;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (signal.aborted) throw new Error('aborted');
   onStep?.('model');
@@ -189,16 +196,14 @@ export async function streamHostOptimize(opts: StreamHostOptimizeOptions): Promi
     });
     if (!response.ok) throw new Error(`http-${response.status}`);
     onStep?.('poll');
-    await readSse(response, (raw) => {
-      if (raw === '{}' || raw === '[DONE]') return;
-      let parsed: string | Record<string, unknown> | null = null;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = raw;
-      }
-      if (typeof parsed === 'string') {
-        out += parsed;
+    let reasoning = '';
+    await readSseFrames(response, (event, data) => {
+      if (data === '{}' || data === '[DONE]') return;
+      if (event === 'reasoning') {
+        reasoning += data;
+        onReasoning?.(reasoning);
+      } else if (event === 'delta') {
+        out += data;
         onDelta(out);
       }
     });

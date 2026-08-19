@@ -228,7 +228,19 @@ export function PreviewCard(props: PreviewCardProps) {
 
       {status === 'optimizing' && (
         <div className="dsh-po-card-body">
-          {state.draft ? <span style={{ whiteSpace: 'pre-wrap' }}>{state.draft}</span> : t('card.optimizing')}
+          {state.reasoning && !state.draft ? (
+            <span
+              style={{
+                whiteSpace: 'pre-wrap',
+                color: 'var(--dsw-alias-text-secondary, #8c93a1)',
+                fontSize: '12px',
+              }}
+            >
+              {state.reasoning}
+            </span>
+          ) : null}
+          {state.draft ? <span style={{ whiteSpace: 'pre-wrap' }}>{state.draft}</span> : null}
+          {!state.draft && !state.reasoning ? t('card.optimizing') : null}
         </div>
       )}
 

@@ -13,6 +13,8 @@ export interface PreviewState {
   generation: number;
   /** 流式优化中的增量文本（optimizing 态实时更新；非流式全程为空串） */
   draft: string;
+  /** 流式优化中的推理过程文本（模型先产 reasoning 再产答案；随 SSE 实时滚动） */
+  reasoning: string;
   /** 发起优化的会话 id（null = 未绑定/全局）：预览窗口只属于该会话，切走不跟随 */
   sessionId: string | null;
   /** 宿主通道当前步骤（'model' | 'start' | 'poll' | null）：卡片显示进度，定位卡点 */
@@ -27,6 +29,7 @@ export const INITIAL_PREVIEW: PreviewState = {
   errorDetail: null,
   generation: 0,
   draft: '',
+  reasoning: '',
   sessionId: null,
   step: null,
 };
@@ -38,6 +41,7 @@ export type PreviewAction =
   | { type: 'guide' }
   | { type: 'close' }
   | { type: 'draft'; text: string }
+  | { type: 'reasoning'; text: string }
   | { type: 'step'; step: 'model' | 'start' | 'poll' | null };
 
 export function reducePreview(state: PreviewState, action: PreviewAction): PreviewState {
@@ -68,6 +72,8 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
       return INITIAL_PREVIEW;
     case 'draft':
       return state.status === 'optimizing' ? { ...state, draft: action.text } : state;
+    case 'reasoning':
+      return state.status === 'optimizing' ? { ...state, reasoning: action.text } : state;
     case 'step':
       return state.status === 'optimizing' ? { ...state, step: action.step } : state;
     default:

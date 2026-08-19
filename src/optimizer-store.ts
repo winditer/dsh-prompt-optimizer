@@ -88,6 +88,7 @@ export async function runOptimize(ctx: {
         signal: controller.signal,
         rpcTimeoutMs: 5000,
         onDelta: (text) => dispatchPreview({ type: 'draft', text }),
+        onReasoning: (text) => dispatchPreview({ type: 'reasoning', text }),
         onStep: (step) => dispatchPreview({ type: 'step', step }),
       }).then(
         (finalText) => {

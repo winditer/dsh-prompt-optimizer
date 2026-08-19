@@ -397,6 +397,8 @@ async function runIntegrationTests(check: (name: string, fn: () => void | Promis
     const enc = new TextEncoder();
     const frames = [
       'event: start\ndata: {}\n\n',
+      'event: reasoning\ndata: 等\n\n',
+      'event: reasoning\ndata: 待\n\n',
       'event: delta\ndata: 优\n\n',
       'event: delta\ndata: 化\n\n',
       'event: delta\ndata: 结\n\n',
@@ -421,15 +423,69 @@ async function runIntegrationTests(check: (name: string, fn: () => void | Promis
     globalThis.fetch = (async () => ({ ok: true, body: stream })) as typeof fetch;
     try {
       const deltas: string[] = [];
+      const readReasoning: string[] = [];
       const result = await streamHostOptimize({
         rpc: rpc as never,
         text: 'x',
         system: 's',
         signal: new AbortController().signal,
         onDelta: (t) => deltas.push(t),
+        onReasoning: (t) => readReasoning.push(t),
       });
       assert.strictEqual(result, '优化结果');
       assert.deepStrictEqual(deltas, ['优', '优化', '优化结', '优化结果']);
+      assert.deepStrictEqual(readReasoning, ['等', '等待']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await check('streamHostOptimize: reasoning frames arrive before text deltas', async () => {
+    const rpc = {
+      call: async (endpoint: string) => {
+        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'cmp-deepseek', model: 'm' } };
+        return { ok: true, value: true };
+      },
+    };
+    const enc = new TextEncoder();
+    const frames = [
+      'event: start\ndata: {}\n\n',
+      'event: reasoning\ndata: 思\n\n',
+      'event: reasoning\ndata: 考\n\n',
+      'event: delta\ndata: 答\n\n',
+      'event: delta\ndata: 案\n\n',
+      'event: done\ndata: {}\n\n',
+    ];
+    const stream = new ReadableStream({
+      start(controller) {
+        let i = 0;
+        const timer = setInterval(() => {
+          if (i < frames.length) {
+            controller.enqueue(enc.encode(frames[i]));
+            i += 1;
+          } else {
+            clearInterval(timer);
+            controller.close();
+          }
+        }, 5);
+      },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: true, body: stream })) as typeof fetch;
+    try {
+      const reasoning: string[] = [];
+      const deltas: string[] = [];
+      const result = await streamHostOptimize({
+        rpc: rpc as never,
+        text: 'x',
+        system: 's',
+        signal: new AbortController().signal,
+        onReasoning: (t) => reasoning.push(t),
+        onDelta: (t) => deltas.push(t),
+      });
+      assert.strictEqual(result, '答案');
+      assert.deepStrictEqual(reasoning, ['思', '思考']);
+      assert.deepStrictEqual(deltas, ['答', '答案']);
     } finally {
       globalThis.fetch = originalFetch;
     }
