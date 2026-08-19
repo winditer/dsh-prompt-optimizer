@@ -171,7 +171,17 @@ export function PreviewCard(props: PreviewCardProps) {
   if (status === 'idle') return null;
 
   const retry = () => {
-    void runOptimize({ getConfig, getLang, getDraft: () => readComposerText(), getSessionModel, getHost, getSessionId });
+    void runOptimize({
+      getConfig,
+      getLang,
+      getDraft: () => readComposerText(),
+      getSessionModel,
+      getHost,
+      getSessionId,
+      trace: (msg) => {
+        void getHost?.()?.rpc.call('debug.log', { msg }).catch(() => undefined);
+      },
+    });
   };
 
   const replace = () => {
