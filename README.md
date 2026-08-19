@@ -1,13 +1,14 @@
 # dsh-prompt-optimizer
 
-输入框 prompt 优化：一键把草稿润色为更清晰、更结构化的高质量 prompt（OpenAI 兼容 API，自配 Key）。
+输入框 prompt 优化：一键把草稿润色为更清晰、更结构化的高质量 prompt。默认**零配置**直接使用当前会话模型（SSE 流式、推理过程实时可见）；也可自配任意 OpenAI 兼容 API。
 
 ![dsh-prompt-optimizer 示意图](assets/screenshot.png)
 
 ## ✨ 功能
 
 - ✨ **一键优化**：输入栏右侧 ✨ 按钮，点击即以当前草稿生成优化结果；快捷键 `Alt+O`（焦点在输入框内时）等效触发
-- 🖼️ **流式预览卡片**：结果边生成边滚入（v4 系列模型的推理过程也实时可见），完成后呈现「替换草稿 / 复制 / 重新优化 / 放弃」四个操作
+- 🖼️ **流式预览卡片**：SSE 真流式——`llm.stream` 每个 `text-delta` 即时推送、逐字滚入；**推理过程（reasoning）先出**，等待阶段实时可见思考内容，完成后呈现「替换草稿 / 复制 / 重新优化 / 放弃」四个操作
+- 🆓 **零配置默认**：无需任何 Key，直接用当前会话/agent 默认模型（宿主 `agentDefaultModel` + `llm` 服务面）；勾选「使用当前会话模型」（默认开启）即可
 - 🔄 **替换草稿**：优化结果一键写回输入框（React 受控组件原生感知），不满意可 `重新优化` 或 `放弃`
 - 📋 **一键复制**：结果复制到剪贴板，1.2 秒「已复制」反馈
 - 🌏 **双语界面**：文案跟随 DSH 语言（zh / en）实时切换
@@ -17,6 +18,8 @@
 - 🔒 **纯本地 Key**：API Key 仅存于本地配置文件，浏览器 fetch 直连你的 API，不经过任何第三方服务
 
 ## 📦 安装
+
+本插件已发布到 npm registry，可直接按包名安装：
 
 ```sh
 dsh plugin --profile web add dsh-prompt-optimizer
@@ -38,6 +41,9 @@ dsh plugin --profile web add file:/path/to/dsh-prompt-optimizer
 
 > **桌面 Desktop profile**：同样支持 `dsh plugin --profile desktop add dsh-prompt-optimizer`；
 > 若此前以 `link:`（symlink）方式手工装配用于开发，保留 link: 即可实时同步工作区改动，无需改回 npm 版。
+>
+> 插件仅声明必要的宿主服务（渲染进程输入槽位、host 的 `llm` / `agentDefaultModel` / `webServer`），
+> 不随安装拉取第三方运行时依赖。
 
 ## ⚙️ 配置
 
@@ -60,7 +66,7 @@ dsh plugin --profile web add file:/path/to/dsh-prompt-optimizer
   - **自配 OpenAI 兼容 API**：浏览器 `fetch` 直连（需支持 CORS 与 SSE）
 - **server half**（`lib/index.js`）：配置持久化（读写 `~/.dsh/prompt-optimizer-config.json`，经 loopback RPC 通道 `/dsh-prompt-optimizer` 暴露 `get`/`set`）+ 宿主模型服务面——
   - `sessionModel`：经宿主 `agentDefaultModel` 取当前会话/agent 默认模型（provider + model，免配置）
-  - `optimize.stream`：**SSE 真流式**——host `webServer` 注册 `/dsh-prompt-optimizer/api/optimize.stream`，`llm.stream` 的每个 `text-delta` 即时 `res.write` 推送，client `fetch` + reader 逐 token 呈现
+  - `optimize.stream`：**SSE 真流式**——host `webServer` 注册 `/dsh-prompt-optimizer/api/optimize.stream`，`llm.stream` 的 `text-delta` 即时 `res.write` 推送（`reasoning-delta` 以 `event: reasoning` 先行推送，等待阶段实时可见），client `fetch` + stream reader 逐 token 呈现
   - `optimize.start / poll / abort`：后台流式累积的降级通道（轮询快照）
   - 不用 `session.create/fork`：渲染进程无法让**后台**会话执行生成（自编 id 被静默拒绝、fork 子会话不在前台不触发模型，实测「永远正在优化」）
   - 不用 `connection.rpc.call` 跑流式：desktop 渲染进程的 rpc.call 在同一流程第二次调用会挂死（实测 sessionModel 成功、第二次永不达），故宿主通道走 HTTP（webServer）

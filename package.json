@@ -1,12 +1,11 @@
 {
   "name": "dsh-prompt-optimizer",
   "version": "2.0.0",
-  "description": "输入框 prompt 优化插件：一键把草稿润色为更清晰、更结构化的 prompt（OpenAI 兼容 API，自配 Key，纯 client + 自持 RPC 配置）。",
+  "description": "DSH 输入框 prompt 优化插件：一键把草稿润色为更清晰、更结构化的高质量 prompt。默认使用当前会话模型（零配置，SSE 流式 + 推理过程实时可见），也支持自配 OpenAI 兼容 API。",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/anywhere-labs/deepseek-harness-desktop.git",
-    "directory": "dsh-plugin-desktop"
+    "url": "git+https://github.com/winditer/dsh-prompt-optimizer.git"
   },
   "type": "module",
   "exports": {
@@ -149,5 +148,17 @@
     "node-addon-require-builtin": "^0.1.4",
     "pnpm": "11.7.0",
     "yaml": "^2.9.0"
-  }
+  },
+  "homepage": "https://github.com/winditer/dsh-prompt-optimizer#readme",
+  "bugs": {
+    "url": "https://github.com/winditer/dsh-prompt-optimizer/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "prompt",
+    "optimizer",
+    "deepseek",
+    "client"
+  ]
 }
