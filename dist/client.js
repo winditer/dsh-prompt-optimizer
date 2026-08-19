@@ -912,7 +912,7 @@ function PreviewCard(props) {
 var import_react3 = require("react");
 
 // src/build-id.ts
-var BUILD_ID = "f2ecc25";
+var BUILD_ID = "0e3b630";
 
 // src/SettingsRow.tsx
 var import_jsx_runtime3 = require("react/jsx-runtime");

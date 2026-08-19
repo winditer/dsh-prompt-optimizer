@@ -10,6 +10,7 @@ import { INITIAL_SETTINGS_FORM, reduceSettingsForm } from '../src/settings-form-
 import { classifyRefresh } from '../src/settings-epoch.js';
 import { getPreviewBusState, dispatchPreview, subscribePreviewBus } from '../src/preview-bus.js';
 import { runOptimize } from '../src/optimizer-store.js';
+import { makeHandler } from '../lib/index.js';
 
 async function runOptimizerTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
   await check('normalizeBaseUrl trims trailing slashes', () => {
@@ -273,6 +274,89 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
       optimize({ config: { ...DEFAULTS, apiKey: '' }, text: 'd', lang: 'zh' }),
       (e: unknown) => e instanceof OptimizeError && e.kind === 'config',
     );
+  });
+}
+
+async function runIntegrationTests(check: (name: string, fn: () => void | Promise<void>) => void | Promise<void>) {
+  await check('integration: server handler + client rpc streaming end-to-end (mock host llm)', async () => {
+    const ctx = {
+      get: (name: string) => {
+        if (name === 'agentDefaultModel') {
+          return { currentSelection: () => ({ provider: 'cmp-deepseek', model: 'deepseek-v4-flash' }) };
+        }
+        if (name === 'llm') {
+          return {
+            stream: async function* () {
+              yield { type: 'text-delta', text: '你好' };
+              yield { type: 'text-delta', text: '世界' };
+              yield { type: 'finish', reason: { kind: 'done' } };
+            },
+          };
+        }
+        return undefined;
+      },
+    };
+    const handler = makeHandler(ctx as never);
+
+    const sm = await handler('sessionModel', {});
+    assert.strictEqual(sm.ok, true);
+    assert.deepStrictEqual(sm.value, { provider: 'cmp-deepseek', model: 'deepseek-v4-flash' });
+
+    const rpc = { call: async (endpoint: string, payload?: Record<string, unknown>) => handler(endpoint, payload ?? {}) };
+    const deltas: string[] = [];
+    const result = await runHostOptimize({
+      rpc: rpc as never,
+      lang: 'zh',
+      text: '草稿',
+      system: '优化',
+      signal: new AbortController().signal,
+      onDelta: (t) => deltas.push(t),
+      intervalMs: 1,
+      timeoutMs: 5000,
+    });
+    assert.strictEqual(result, '你好世界', 'full text accumulates from deltas');
+    assert.deepStrictEqual(deltas, ['你好世界']);
+  });
+
+  await check('integration: llm stream failure surfaces as poll error to client', async () => {
+    const ctx = {
+      get: (name: string) => {
+        if (name === 'agentDefaultModel') {
+          return { currentSelection: () => ({ provider: 'cmp-deepseek', model: 'deepseek-v4-flash' }) };
+        }
+        if (name === 'llm') {
+          return {
+            stream: async function* () {
+              throw new Error('provider-failed');
+              yield { type: 'finish', reason: { kind: 'done' } };
+            },
+          };
+        }
+        return undefined;
+      },
+    };
+    const handler = makeHandler(ctx as never);
+    const rpc = { call: async (endpoint: string, payload?: Record<string, unknown>) => handler(endpoint, payload ?? {}) };
+    await assert.rejects(
+      runHostOptimize({
+        rpc: rpc as never,
+        lang: 'zh',
+        text: 'x',
+        system: 's',
+        signal: new AbortController().signal,
+        onDelta: () => undefined,
+        intervalMs: 1,
+        timeoutMs: 5000,
+      }),
+      /provider-failed/,
+    );
+  });
+
+  await check('integration: start without llm service errors cleanly', async () => {
+    const handler = makeHandler({ get: () => undefined } as never);
+    const start = await handler('optimize.start', { provider: 'p', model: 'm', text: 'x', system: '' });
+    assert.strictEqual(start.ok, false);
+    assert.strictEqual((start as { error?: { code?: string } }).error?.code, 'no-llm');
   });
 }
 
@@ -703,6 +787,8 @@ export async function run(): Promise<boolean> {
   });
 
   await runOptimizerTests(check);
+
+  await runIntegrationTests(check);
 
   await runStateTests(check);
   await runLocaleTests(check);
