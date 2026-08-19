@@ -418,7 +418,9 @@ async function runOptimizeStoreTests(check: (name: string, fn: () => void | Prom
       prompt: async () => ({ accepted: true }),
       cancel: async () => undefined,
       history: async () => ({
-        events: [{ event: { type: 'assistant.message', seq: 1, data: { content: [{ type: 'text', text: '优化结果' }] } } }],
+        events: [
+          { event: { type: 'assistant/message', seq: 1, data: { message: { role: 'assistant', content: [{ type: 'text', text: '优化结果' }] } } } },
+        ],
       }),
     };
     await runOptimize({
@@ -490,22 +492,31 @@ async function runSettingsStoreTests(check: (name: string, fn: () => void | Prom
 }
 
 async function runPreviewBusTests(check: (name: string, fn: () => void | Promise<void>) => void) {
-  await check('host channel: text folding skips user events, orders by seq, collects text blocks', () => {
-    assert.strictEqual(foldSessionText(undefined), '');
-    assert.strictEqual(foldSessionText([]), '');
+  await check('host channel: fold aligns with real session events (chunk delta + message completion)', () => {
+    assert.deepStrictEqual(foldSessionText(undefined), { text: '', completed: false });
+    assert.deepStrictEqual(foldSessionText([]), { text: '', completed: false });
+    // 真实形状：user/message（跳过）、assistant/chunk（流式增量）、assistant/message（完成信号）
     const events = [
-      { event: { type: 'user.message', seq: 1, data: { role: 'user', content: [{ type: 'text', text: '请优化：XX' }] } } },
-      { event: { type: 'assistant.message', seq: 3, data: { role: 'assistant', content: [{ type: 'text', text: '你好' }, { type: 'text', text: '世界' }] } } },
-      { event: { type: 'assistant.delta', seq: 2, data: { role: 'assistant', content: [{ type: 'text', text: 'HELLO' }] } } },
-      { event: { type: 'tool.event', seq: 4, data: { content: 'x' } } },
+      { event: { type: 'user/message', seq: 1, data: { role: 'user', content: [{ type: 'text', text: '请优化：XX' }] } } },
+      { event: { type: 'assistant/chunk', seq: 2, data: { chunk: { type: 'delta', index: 0, blockType: 'text', text: '你好' } } } },
+      { event: { type: 'assistant/chunk', seq: 3, data: { chunk: { type: 'delta', index: 0, blockType: 'text', text: '世界' } } } },
+      { event: { type: 'assistant/chunk', seq: 4, data: { chunk: { type: 'delta', index: 0, blockType: 'reasoning', text: '推理内容' } } } },
+      { event: { type: 'assistant/message', seq: 5, data: { message: { role: 'assistant', content: [{ type: 'text', text: '你好世界' }] } } } },
     ];
-    // 非消息类事件忽略，且按 seq 排序
-    assert.strictEqual(foldSessionText(events), 'HELLO你好世界');
+    const fold = foldSessionText(events);
+    assert.strictEqual(fold.text, '你好世界', 'only text deltas, reasoning ignored');
+    assert.strictEqual(fold.completed, true);
     // user 事件即使含 text 也被跳过
-    assert.strictEqual(
-      foldSessionText([{ event: { type: 'user.message', seq: 1, data: { role: 'user', text: 'user-echo' } } }]),
-      '',
+    assert.deepStrictEqual(
+      foldSessionText([{ event: { type: 'user/message', seq: 1, data: { role: 'user', text: 'user-echo' } } }]),
+      { text: '', completed: false },
     );
+    // 无 delta 时有完成消息 → 全文兜底
+    const fallback = foldSessionText([
+      { event: { type: 'assistant/message', seq: 9, data: { message: { role: 'assistant', content: [{ type: 'text', text: '完整结果' }] } } } },
+    ]);
+    assert.strictEqual(fallback.text, '完整结果');
+    assert.strictEqual(fallback.completed, true);
   });
 
   await check('host channel: prefixDelta computes incremental suffix', () => {
@@ -532,7 +543,9 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
         const progress = Math.min(historyCount, 3);
         const events = [];
         for (let i = 0; i < progress; i += 1) {
-          events.push({ event: { type: 'assistant.message', seq: i + 1, data: { content: [{ type: 'text', text: `tok${i + 1}` }] } } });
+          events.push({
+            event: { type: 'assistant/chunk', seq: i + 1, data: { chunk: { type: 'delta', index: 0, blockType: 'text', text: `tok${i + 1}` } } },
+          });
         }
         return { events };
       },
@@ -558,6 +571,39 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
     assert.strictEqual(result, 'tok1tok2tok3');
     assert.deepStrictEqual(deltas, ['tok1', 'tok1tok2', 'tok1tok2tok3']);
     assert.strictEqual(cancelCalls, 0);
+  });
+
+  await check('host channel: assistant/message completion signal ends polling immediately', async () => {
+    let historyCalls = 0;
+    const api = {
+      create: async () => undefined,
+      prompt: async () => ({ accepted: true }),
+      history: async () => {
+        historyCalls += 1;
+        return {
+          events: [
+            { event: { type: 'assistant/chunk', seq: 1, data: { chunk: { type: 'delta', index: 0, blockType: 'text', text: '部分' } } } },
+            { event: { type: 'assistant/message', seq: 2, data: { message: { role: 'assistant', content: [{ type: 'text', text: '部分完整' }] } } } },
+          ],
+        };
+      },
+      cancel: async () => undefined,
+    };
+    const deltas: string[] = [];
+    const result = await runHostOptimize({
+      api: api as never,
+      parentSessionId: 'p',
+      sessionId: 'session-po-optimizer-x',
+      lang: 'zh',
+      text: 'd',
+      signal: new AbortController().signal,
+      onDelta: (text) => deltas.push(text),
+      intervalMs: 1,
+      timeoutMs: 5000,
+    });
+    assert.strictEqual(result, '部分完整');
+    assert.deepStrictEqual(deltas, ['部分完整']);
+    assert.strictEqual(historyCalls, 1, 'completion signal → single poll, no waiting');
   });
 
   await check('host channel: abort cancels the host session', async () => {

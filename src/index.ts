@@ -66,7 +66,8 @@ export function apply(ctx: ClientContext) {
   // 2.6 宿主通道（临时对话 + 当前会话模型，零配置）：
   // 可复用的固定临时会话承载优化；模型继承当前会话（selectModel），
   // 结果经 session.history 轮询增量呈现（近似流式）
-  const PO_HOST_SESSION_ID = 'po-optimizer';
+  // 临时会话 id：宿主按 session-<uuid> 约定校验，普通短 id 会被 create 拒绝（实测无会话 → 一直空轮询）
+  const PO_HOST_SESSION_ID = 'session-po-optimizer-9f3c2a7e-1b4d-4c8a-9e6f-2a5b7d1c3e9f';
   const hostApi = (ctx.connection.api as never) as {
     create(p: { sessionId: string }): Promise<unknown>;
     selectModel(p: { sessionId: string; provider: string; model: string }): Promise<unknown>;
