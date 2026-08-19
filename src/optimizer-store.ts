@@ -89,9 +89,6 @@ export async function runOptimize(ctx: {
         signal: controller.signal,
         onDelta: (text) => dispatchPreview({ type: 'draft', text }),
         onStep: (step) => dispatchPreview({ type: 'step', step }),
-        trace: (msg) => {
-          console.warn('[dsh-prompt-optimizer]', msg);
-        },
       }).then(
         async (finalText) => {
           dispatchPreview({ type: 'delta', draft: finalText });

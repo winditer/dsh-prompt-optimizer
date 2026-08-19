@@ -124,7 +124,7 @@ export function prefixDelta(prev: string, next: string): string {
  * 单次调用绕开该限制。卡片无逐字滚动（流式能力保留在 fetch 通道）。
  */
 export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<string> {
-  const { rpc, lang: _lang, text, system, signal, onDelta, onStep, trace } = opts;
+  const { rpc, lang: _lang, text, system, signal, onDelta, onStep } = opts;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const rpcTimeoutMs = opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
