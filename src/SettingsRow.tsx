@@ -127,11 +127,11 @@ export function SettingsRow(props: SettingsRowProps) {
   //    下次本地动作（edit/commit）再把 state.revision 抬到与纪元一致。
   useEffect(() => {
     actions.seed(
-      { baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model },
+      { baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model, useSessionModel: config.useSessionModel },
       submitRevision + getEpoch(),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.baseUrl, config.apiKey, config.model, getEpoch]);
+  }, [config.baseUrl, config.apiKey, config.model, config.useSessionModel, getEpoch]);
 
   // 「去设置」（预览卡未配置引导）→ 自动展开表单
   useEffect(() => onOpenSettingsRequest(() => setExpanded(true)), []);

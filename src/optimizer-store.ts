@@ -91,8 +91,8 @@ export async function runOptimize(ctx: {
         onStep: (step) => dispatchPreview({ type: 'step', step }),
       }).then(
         async (finalText) => {
-          dispatchPreview({ type: 'delta', draft: finalText });
-          await new Promise((r) => setTimeout(r, 200));
+          dispatchPreview({ type: 'draft', text: finalText });
+          await new Promise((r) => setTimeout(r, 400));
           dispatchPreview({ type: 'show', result: finalText });
         },
         (e) => {
