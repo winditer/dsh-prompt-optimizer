@@ -76,7 +76,7 @@ export interface RunHostOptimizeOptions {
   rpcTimeoutMs?: number;
 }
 
-const DEFAULT_INTERVAL_MS = 250;
+const DEFAULT_INTERVAL_MS = 100;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_RPC_TIMEOUT_MS = 5_000;
 
