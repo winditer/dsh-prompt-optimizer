@@ -98,7 +98,7 @@ export async function runOptimize(ctx: {
         onDelta: (text) => dispatchPreview({ type: 'draft', text }),
         onStep: (step) => dispatchPreview({ type: 'step', step }),
         trace: (msg) => {
-          void ctx.host?.rpc.call('debug.log', { msg }).catch(() => undefined);
+          console.warn('[dsh-prompt-optimizer]', msg);
         },
       }).then(
         (finalText) => dispatchPreview({ type: 'show', result: finalText }),

@@ -179,7 +179,7 @@ export function PreviewCard(props: PreviewCardProps) {
       getHost,
       getSessionId,
       trace: (msg) => {
-        void getHost?.()?.rpc.call('debug.log', { msg }).catch(() => undefined);
+        console.warn('[dsh-prompt-optimizer]', msg);
       },
     });
   };

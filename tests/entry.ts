@@ -352,6 +352,39 @@ async function runIntegrationTests(check: (name: string, fn: () => void | Promis
     );
   });
 
+  await check('integration: single-call optimize.run end-to-end over real handler', async () => {
+    const ctx = {
+      get: (name: string) => {
+        if (name === 'agentDefaultModel') {
+          return { currentSelection: () => ({ provider: 'cmp-deepseek', model: 'deepseek-v4-flash' }) };
+        }
+        if (name === 'llm') {
+          return {
+            stream: async function* () {
+              yield { type: 'text-delta', text: '好的' };
+              yield { type: 'text-delta', text: '，已优化' };
+              yield { type: 'finish', reason: { kind: 'done' } };
+            },
+          };
+        }
+        return undefined;
+      },
+    };
+    const handler = makeHandler(ctx as never);
+    const rpc = { call: async (endpoint: string, payload?: Record<string, unknown>) => handler(endpoint, payload ?? {}) };
+    const deltas: string[] = [];
+    const result = await runHostOptimize({
+      rpc: rpc as never,
+      lang: 'zh',
+      text: '草稿',
+      system: 'opt',
+      signal: new AbortController().signal,
+      onDelta: (t) => deltas.push(t),
+    });
+    assert.strictEqual(result, '好的，已优化');
+    assert.deepStrictEqual(deltas, ['好的，已优化']);
+  });
+
   await check('integration: start without llm service errors cleanly', async () => {
     const handler = makeHandler({ get: () => undefined } as never);
     const start = await handler('optimize.start', { provider: 'p', model: 'm', text: 'x', system: '' });
@@ -497,9 +530,7 @@ async function runOptimizeStoreTests(check: (name: string, fn: () => void | Prom
     dispatchPreview({ type: 'close' });
     const rpc = {
       call: async (endpoint: string) => {
-        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'deepseek-official', model: 'm' } };
-        if (endpoint === 'optimize.start') return { ok: true, value: { taskId: 't' } };
-        if (endpoint === 'optimize.poll') return { ok: true, value: { done: true, text: '优化结果' } };
+        if (endpoint === 'optimize.run') return { ok: true, value: { text: '优化结果' } };
         return { ok: true, value: true };
       },
     };
@@ -572,20 +603,15 @@ async function runSettingsStoreTests(check: (name: string, fn: () => void | Prom
 }
 
 async function runPreviewBusTests(check: (name: string, fn: () => void | Promise<void>) => void) {
-  await check('host channel: runtime-host rpc — polls increments and streams deltas', async () => {
-    let pollCalls = 0;
-    const abortCalls: string[] = [];
+  await check('host channel: single-call optimize.run returns full text', async () => {
+    let runCalls = 0;
     const rpc = {
       call: async (endpoint: string, payload?: Record<string, unknown>) => {
-        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'deepseek-official', model: 'deepseek-v4-flash-cmp' } };
-        if (endpoint === 'optimize.start') return { ok: true, value: { taskId: 'po-task-1' } };
-        if (endpoint === 'optimize.poll') {
-          pollCalls += 1;
-          const progress = Math.min(pollCalls, 3);
-          return { ok: true, value: { done: progress === 3, text: progress === 1 ? 'tok1' : progress === 2 ? 'tok1tok2' : 'tok1tok2tok3' } };
-        }
-        if (endpoint === 'optimize.abort') { abortCalls.push(String(payload?.taskId)); return { ok: true, value: true }; }
-        return { ok: false, error: { code: 'unknown' } };
+        assert.strictEqual(endpoint, 'optimize.run', 'single RPC only');
+        runCalls += 1;
+        assert.ok(String(payload?.text).length > 0);
+        assert.ok(String(payload?.system).length > 0);
+        return { ok: true, value: { text: '优化结果全文' } };
       },
     };
     const deltas: string[] = [];
@@ -593,55 +619,17 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
       rpc: rpc as never,
       lang: 'zh',
       text: '草稿',
-      system: 'optimize',
+      system: 'opt',
       signal: new AbortController().signal,
-      onDelta: (text) => deltas.push(text),
-      intervalMs: 1,
-      timeoutMs: 5000,
+      onDelta: (t) => deltas.push(t),
     });
-    assert.strictEqual(result, 'tok1tok2tok3');
-    assert.deepStrictEqual(deltas, ['tok1', 'tok1tok2', 'tok1tok2tok3']);
-    assert.ok(pollCalls >= 3, `polled until done, got ${pollCalls}`);
-    assert.deepStrictEqual(abortCalls, ['po-task-1'], 'cleanup aborts the background task');
+    assert.strictEqual(result, '优化结果全文');
+    assert.deepStrictEqual(deltas, ['优化结果全文']);
+    assert.strictEqual(runCalls, 1);
   });
 
-  await check('host channel: rrpc poll done on first round returns immediately', async () => {
-    let pollCalls = 0;
-    const rpc = {
-      call: async (endpoint: string) => {
-        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'p', model: 'm' } };
-        if (endpoint === 'optimize.start') return { ok: true, value: { taskId: 't' } };
-        if (endpoint === 'optimize.poll') { pollCalls += 1; return { ok: true, value: { done: true, text: '完整结果' } }; }
-        return { ok: true, value: true };
-      },
-    };
-    const deltas: string[] = [];
-    const result = await runHostOptimize({
-      rpc: rpc as never,
-      lang: 'zh',
-      text: 'd',
-      system: 's',
-      signal: new AbortController().signal,
-      onDelta: (text) => deltas.push(text),
-      intervalMs: 1,
-      timeoutMs: 5000,
-    });
-    assert.strictEqual(result, '完整结果');
-    assert.deepStrictEqual(deltas, ['完整结果']);
-    assert.strictEqual(pollCalls, 1, 'done → single poll, no waiting');
-  });
-
-  await check('host channel: resolveHostSessionModel parses provider/model, null on failure', async () => {
-    assert.deepStrictEqual(
-      await resolveHostSessionModel({ call: async () => ({ ok: true, value: { provider: 'p', model: 'm', reasoningEffort: 'high' } }) } as never),
-      { provider: 'p', model: 'm', reasoningEffort: 'high' },
-    );
-    assert.strictEqual(await resolveHostSessionModel({ call: async () => ({ ok: false, error: { code: 'no-model' } }) } as never), null);
-    assert.strictEqual(await resolveHostSessionModel({ call: async () => ({ ok: true, value: {} }) } as never), null);
-  });
-
-  await check('host channel: sessionModel unavailable fails loud (no silent polling)', async () => {
-    const rpc = { call: async () => ({ ok: false, error: { code: 'no-agent-model' } }) };
+  await check('host channel: optimize.run failure fails loud with error', async () => {
+    const rpc = { call: async () => ({ ok: false, error: { code: 'no-llm', details: 'llm service unavailable' } }) };
     await assert.rejects(
       runHostOptimize({
         rpc: rpc as never,
@@ -651,20 +639,18 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
         signal: new AbortController().signal,
         onDelta: () => undefined,
       }),
-      /host-unavailable/,
+      /host-start-rejected/,
     );
   });
 
-  await check('host channel: abort notifies server and rejects', async () => {
+  await check('host channel: abort after single call rejects', async () => {
     const controller = new AbortController();
-    const abortCalls: string[] = [];
+    let runCalls = 0;
     const rpc = {
-      call: async (endpoint: string, payload?: Record<string, unknown>) => {
-        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'p', model: 'm' } };
-        if (endpoint === 'optimize.start') return { ok: true, value: { taskId: 't' } };
-        if (endpoint === 'optimize.poll') return { ok: true, value: { done: false, text: '' } };
-        if (endpoint === 'optimize.abort') { abortCalls.push(String(payload?.taskId)); return { ok: true, value: true }; }
-        return { ok: false, error: { code: 'unknown' } };
+      call: async () => {
+        runCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { ok: true, value: { text: 'late' } };
       },
     };
     const run = runHostOptimize({
@@ -674,12 +660,10 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
       system: 's',
       signal: controller.signal,
       onDelta: () => undefined,
-      intervalMs: 5,
-      timeoutMs: 50_000,
     });
-    setTimeout(() => controller.abort(), 10);
+    setTimeout(() => controller.abort(), 5);
     await assert.rejects(run, /aborted/);
-    assert.ok(abortCalls.includes('t'), 'abort notifies server (loop + finally cleanup)');
+    assert.strictEqual(runCalls, 1);
   });
 
   // 模块级单例：先回到 idle，避免污染其他用例
