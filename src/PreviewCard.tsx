@@ -71,8 +71,9 @@ function injectCss() {
   background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.14));
 }
 .dsh-po-card-btn.primary {
+  /* 写死主色：--dsw-alias-brand-primary 在深夜模式解析为浅色 → 白底白字不可读（用户实测） */
   color: #fff;
-  background: var(--dsw-alias-brand-primary, #1677ff);
+  background: #1677ff;
 }
 `;
   document.head.appendChild(style);
