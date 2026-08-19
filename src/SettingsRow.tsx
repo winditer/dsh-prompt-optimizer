@@ -159,12 +159,7 @@ export function SettingsRow(props: SettingsRowProps) {
     <div className="optiSettings">
       <div className="optiSettingsTitle" onClick={() => setExpanded((v) => !v)} style={{ cursor: 'pointer' }}>
         {t('settings.title')}
-        {!expanded &&
-          (config.useSessionModel ? (
-            <span className="optiSettingsHint"> · {t('settings.sessionModelEnabled')}</span>
-          ) : (
-            <span className="optiSettingsHint"> · {t(config.apiKey ? 'card.configured.hint' : 'card.unconfigured.hint').replace('{model}', modelLabel)}</span>
-          ))}
+        {!expanded && <span className="optiSettingsHint"> · {t('settings.sessionModelEnabled')}</span>}
       </div>
 
       {expanded && (

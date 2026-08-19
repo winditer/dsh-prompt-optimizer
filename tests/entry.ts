@@ -25,6 +25,10 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
     // useSessionModel 布尔透传；非布尔回退默认 true
     assert.strictEqual(mergeConfig({ useSessionModel: false }).useSessionModel, false);
     assert.strictEqual(mergeConfig({ useSessionModel: 'x' as never }).useSessionModel, true);
+    // 旧默认 deepseek-chat 迁移到新默认 deepseek-v4-flash
+    assert.strictEqual(mergeConfig({ model: 'deepseek-chat' }).model, DEFAULTS.model);
+    // 用户自定义的 deepseek-chat 保留（显式选择不被迁移）
+    assert.strictEqual(mergeConfig({ baseUrl: 'http://x', model: 'deepseek-chat' }).model, 'deepseek-chat');
   });
 
   await check('checkConfig: useSessionModel skips model requirement; resolveSessionModel reads current.model', async () => {

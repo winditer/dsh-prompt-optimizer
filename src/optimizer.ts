@@ -24,7 +24,12 @@ export function normalizeBaseUrl(url: string): string {
 export function mergeConfig(raw: Partial<PromptConfig> | null | undefined): PromptConfig {
   const baseUrl = typeof raw?.baseUrl === 'string' && raw.baseUrl.trim() ? raw.baseUrl.trim() : DEFAULTS.baseUrl;
   const apiKey = typeof raw?.apiKey === 'string' ? raw.apiKey : DEFAULTS.apiKey;
-  const model = typeof raw?.model === 'string' && raw.model.trim() ? raw.model.trim() : DEFAULTS.model;
+  // 旧默认迁移：默认 baseUrl 下残留的 deepseek-chat（v1 默认）视为未设置，落到新默认 deepseek-v4-flash；
+  // 自定义过 baseUrl（显式选择）则保留原模型名
+  const rawModel = typeof raw?.model === 'string' && raw.model.trim() ? raw.model.trim() : DEFAULTS.model;
+  const migratedDefault =
+    rawModel === 'deepseek-chat' && normalizeBaseUrl(baseUrl) === DEFAULTS.baseUrl ? DEFAULTS.model : rawModel;
+  const model = migratedDefault;
   const useSessionModel = typeof raw?.useSessionModel === 'boolean' ? raw.useSessionModel : DEFAULTS.useSessionModel;
   return { baseUrl: normalizeBaseUrl(baseUrl), apiKey, model, useSessionModel };
 }
