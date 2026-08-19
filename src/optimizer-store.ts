@@ -95,7 +95,8 @@ export async function runOptimize(ctx: {
             if (timedOut) dispatchPreview({ type: 'fail', kind: 'timeout' as OptimizeErrorKind });
             return;
           }
-          dispatchPreview({ type: 'fail', kind: toErrorKind(e).kind });
+          const kind = toErrorKind(e).kind;
+          dispatchPreview({ type: 'fail', kind, detail: String((e as { message?: unknown })?.message ?? e) });
         },
       );
       return;

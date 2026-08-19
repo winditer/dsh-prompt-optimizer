@@ -59,6 +59,12 @@ function injectCss() {
   color: var(--dsw-alias-state-error-primary, #d03050);
   font-size: 13px;
 }
+.dsh-po-card-err-detail {
+  margin-top: 4px;
+  color: var(--dsw-alias-text-secondary, #8c93a1);
+  font-size: 12px;
+  word-break: break-all;
+}
 .dsh-po-card-row {
   display: flex;
   gap: 8px;
@@ -237,6 +243,7 @@ export function PreviewCard(props: PreviewCardProps) {
       {status === 'error' && (
         <>
           <div className="dsh-po-card-err">{t(errorKey(errorKind))}</div>
+          {errorDetail ? <div className="dsh-po-card-err-detail">{errorDetail}</div> : null}
           <div className="dsh-po-card-row">
             <button type="button" className="dsh-po-card-btn primary" onClick={retry}>
               {t('card.retry')}

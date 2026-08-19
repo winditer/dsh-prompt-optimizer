@@ -15,6 +15,8 @@ export interface SettingsRowProps {
   saveConfig: (values: SettingsFormValues) => Promise<void>;
   resetConfig: () => Promise<void>;
   getEpoch: () => number;
+  /** 宿主通道自检：当前会话模型是否可经 server half 获取（零配置通道的健康探针） */
+  getHostStatus?: () => Promise<{ available: boolean; provider?: string; model?: string; error?: string } | null>;
 }
 
 const CSS_ID = 'dsh-prompt-optimizer/settings.css';
@@ -91,7 +93,14 @@ function injectCss() {
 }
 
 export function SettingsRow(props: SettingsRowProps) {
-  const { t, useStore, actions, getConfig, saveConfig, resetConfig, getEpoch } = props;
+  const { t, useStore, actions, getConfig, saveConfig, resetConfig, getEpoch, getHostStatus } = props;
+  const [hostStatus, setHostStatus] = useState<{ available: boolean; provider?: string; model?: string; error?: string } | null>(null);
+  useEffect(() => {
+    if (!getHostStatus) return;
+    let alive = true;
+    getHostStatus().then((st) => { if (alive) setHostStatus(st); }).catch(() => { if (alive) setHostStatus({ available: false, error: 'rpc-failed' }); });
+    return () => { alive = false; };
+  }, [getHostStatus]);
   const [expanded, setExpanded] = useState(false);
   const [submitRevision, setSubmitRevision] = useState(0);
 
@@ -169,6 +178,22 @@ export function SettingsRow(props: SettingsRowProps) {
 
       {expanded && (
         <div className="optiSettingsForm">
+          {getHostStatus && (
+            <div className="optiSettingsField" style={{ flexDirection: 'row' }}>
+              <span
+                className="optiSettingsHint"
+                style={{
+                  color: hostStatus?.available ? 'var(--dsw-alias-state-success-primary, #2f9e63)' : 'var(--dsw-alias-state-error-primary, #d03050)',
+                }}
+              >
+                {hostStatus === null
+                  ? t('settings.hostProbe')
+                  : hostStatus.available
+                    ? `${t('settings.hostOk')} ${hostStatus.provider}/${hostStatus.model}`
+                    : `${t('settings.hostFail')} ${hostStatus.error ?? ''}`}
+              </span>
+            </div>
+          )}
           <div className="optiSettingsField">
             <label className="optiSettingsLabel">
               <input

@@ -36,6 +36,10 @@ export const zh = {
   'settings.useSessionModel': '使用当前会话模型',
   'settings.useSessionModelHint': '开启时优化请求跟随会话模型；关闭后使用下方自定义模型名',
   'settings.sessionModelEnabled': '已选择会话默认模型',
+  'settings.hostProbe': '宿主通道探测中…',
+  'settings.hostOk': '会话模型通道 ✓',
+  'settings.hostFail': '会话模型通道不可用：',
+
   'settings.save': '保存',
   'settings.reset': '恢复默认',
   'settings.saved': '已保存',
@@ -76,6 +80,10 @@ export const en: LocaleDict = {
   'settings.useSessionModel': 'Use current session model',
   'settings.useSessionModelHint': 'When on, optimization requests follow the session model; when off, the custom model below is used',
   'settings.sessionModelEnabled': 'Session default model selected',
+  'settings.hostProbe': 'probing host channel…',
+  'settings.hostOk': 'session model channel ✓',
+  'settings.hostFail': 'session model channel unavailable: ',
+
   'settings.save': 'Save',
   'settings.reset': 'Reset to defaults',
   'settings.saved': 'Saved',

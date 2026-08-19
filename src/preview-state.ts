@@ -8,6 +8,8 @@ export interface PreviewState {
   status: PreviewStatus;
   result: string;
   errorKind: OptimizeErrorKind | null;
+  /** 原始错误细节（宿主通道失败等原因，卡片显示出来便于诊断） */
+  errorDetail: string | null;
   generation: number;
   /** 流式优化中的增量文本（optimizing 态实时更新；非流式全程为空串） */
   draft: string;
@@ -20,6 +22,7 @@ export const INITIAL_PREVIEW: PreviewState = {
   status: 'idle',
   result: '',
   errorKind: null,
+  errorDetail: null,
   generation: 0,
   draft: '',
   sessionId: null,
@@ -28,7 +31,7 @@ export const INITIAL_PREVIEW: PreviewState = {
 export type PreviewAction =
   | { type: 'begin'; sessionId?: string | null }
   | { type: 'show'; result: string }
-  | { type: 'fail'; kind: OptimizeErrorKind }
+  | { type: 'fail'; kind: OptimizeErrorKind; detail?: string }
   | { type: 'guide' }
   | { type: 'close' }
   | { type: 'draft'; text: string };
@@ -41,6 +44,7 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
         ...state,
         status: 'optimizing',
         errorKind: null,
+        errorDetail: null,
         draft: '',
         sessionId: action.sessionId ?? null,
         generation: state.generation + 1,
@@ -51,7 +55,7 @@ export function reducePreview(state: PreviewState, action: PreviewAction): Previ
         : state;
     case 'fail':
       return state.status === 'optimizing'
-        ? { ...state, status: 'error', errorKind: action.kind }
+        ? { ...state, status: 'error', errorKind: action.kind, errorDetail: action.detail ?? null }
         : state;
     case 'guide':
       return state.status === 'optimizing' ? state : { ...state, status: 'guide' };

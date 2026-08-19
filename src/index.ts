@@ -191,6 +191,26 @@ export function apply(ctx: ClientContext) {
             saveConfig,
             resetConfig,
             getEpoch: () => configEpoch,
+            getHostStatus: async () => {
+              // 宿主通道自检：零配置模式能否从 server half 拿到当前会话模型
+              try {
+                const res = await withTimeout(
+                  ctx.connection.rpc.call('/dsh-prompt-optimizer', 'sessionModel', {}),
+                  5000,
+                  'sessionModel',
+                );
+                if (res.ok && res.value && typeof res.value === 'object') {
+                  const v = res.value as { provider?: string; model?: string };
+                  if (typeof v.provider === 'string' && typeof v.model === 'string') {
+                    return { available: true, provider: v.provider, model: v.model };
+                  }
+                  return { available: false, error: (res.error && (res.error.details ?? res.error.code)) || 'no-model' };
+                }
+                return { available: false, error: (res.error && (res.error.details ?? res.error.code)) || 'rpc-failed' };
+              } catch (e) {
+                return { available: false, error: String((e as { message?: unknown })?.message ?? e) };
+              }
+            },
           }),
         },
         SettingsRow,
