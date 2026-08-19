@@ -49,20 +49,31 @@ export async function runOptimize(ctx: {
   };
   /** 发起优化的会话 id（绑定预览窗口，切会话不跟随） */
   getSessionId?(): string | null;
+  /** client 侧诊断埋点（写入 server 调试日志，定位卡点） */
+  trace?(msg: string): void;
 }): Promise<void> {
   const config = ctx.getConfig();
   const draft = ctx.getDraft().trim();
-  if (!draft) return;
+  ctx.trace?.(`runOptimize: called draftLen=${draft.length} useSessionModel=${config.useSessionModel}`);
+  if (!draft) {
+    ctx.trace?.('runOptimize: empty draft -> return');
+    return;
+  }
 
   // 并发把关：同会话在途 → 丢弃本次触发（按钮 busy 已禁用点击，这里是竞态最后防线）；
   // 切换会话后发起 → 中止旧请求让路（各会话可独立优化，宿主临时会话由 cancel 收尾）
   const sessionId = ctx.getSessionId?.() ?? null;
   if (activeController !== null) {
-    if (sessionId === activeSessionId) return;
+    if (sessionId === activeSessionId) {
+      ctx.trace?.('runOptimize: same-session inflight -> debounce');
+      return;
+    }
+    ctx.trace?.('runOptimize: different session -> abort stale');
     activeController.abort();
     activeController = null;
     activeSessionId = null;
   }
+  ctx.trace?.('runOptimize: dispatch begin');
   dispatchPreview({ type: 'begin', sessionId });
 
   const controller = new AbortController();
@@ -77,6 +88,7 @@ export async function runOptimize(ctx: {
   try {
     // 会话模型模式（默认）：宿主临时对话通道 —— 零配置，无需 checkConfig
     if (config.useSessionModel && ctx.host) {
+      ctx.trace?.('runOptimize: host branch -> runHostOptimize');
       await runHostOptimize({
         rpc: ctx.host.rpc,
         lang: ctx.getLang(),
