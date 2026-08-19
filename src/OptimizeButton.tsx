@@ -100,6 +100,7 @@ export function OptimizeButton(props: OptimizeButtonProps) {
       getSessionModel,
       getHost,
       getSessionId,
+      trace: (msg) => console.warn('[dsh-prompt-optimizer]', msg),
     });
   }, [busy, getConfig, getLang]);
 
