@@ -11,8 +11,8 @@ export interface PreviewCardProps {
   getConfig: () => PromptConfig;
   getLang: () => Lang;
   openSettings: () => void;
-  getSessionModel?: () => Promise<string | null>;
-  getHost?: () => { api: unknown; parentSessionId: string } | null;
+  getSessionModel?: () => Promise<{ provider: string; model: string } | null>;
+  getHost?: () => { rpc: { call: (e: string, p?: Record<string, unknown>) => Promise<{ ok: boolean; value?: unknown; error?: { code?: string } }> } } | null;
   getSessionId?: () => string | null;
 }
 

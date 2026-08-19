@@ -2,7 +2,7 @@
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 import type { Lang, PromptConfig } from './optimizer.js';
-import { DEFAULTS, mergeConfig, resolveSessionModel } from './optimizer.js';
+import { DEFAULTS, mergeConfig } from './optimizer.js';
 import { NS, zh, en, langOf } from './locales.js';
 import type { OptimizerActions } from './optimizer-store.js';
 import { emitOptimizeRequest, emitOpenSettingsRequest } from './events.js';
@@ -10,6 +10,8 @@ import { OptimizeButton } from './OptimizeButton.tsx';
 import { PreviewCard } from './PreviewCard.tsx';
 import { SettingsRow } from './SettingsRow.tsx';
 import { createSettingsFormStore } from './settings-store.js';
+import type { HostRpc } from './session-optimizer.js';
+import { withTimeout } from './session-optimizer.js';
 
 /**
  * 声明插件依赖的客户端服务（cordis service keys）：apply 内经 `ctx.<service>` 访问的服务必须在此声明。
@@ -57,32 +59,36 @@ export function apply(ctx: ClientContext) {
     const sessionId = info?.sessionId;
     return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null;
   };
-  const getSessionModel = async (): Promise<string | null> => {
-    const sessionId = getActiveSession();
-    if (!sessionId) return null;
-    return resolveSessionModel(ctx.connection.api as never, { sessionId });
+  // 2.6 宿主通道（会话默认模型 + server 半 llm.stream，零配置）：
+  // 通道即自有 RPC（/dsh-prompt-optimizer）；server half 用 agentDefaultModel 取当前
+  // 会话模型、llm.stream 真流式（取自 dsh-elf 已验证的宿主服务面）。不用 session.create/
+  // fork：后台会话不在前台不触发模型执行，自编 id 被静默拒绝 → 「永远正在优化」（实测）。
+  const hostRpc: HostRpc = {
+    call: (endpoint, payload) =>
+      ctx.connection.rpc.call('/dsh-prompt-optimizer', endpoint, payload ?? {}),
+  };
+  const getHost = (): { rpc: HostRpc } => ({ rpc: hostRpc });
+  const getSessionModel = async (): Promise<{ provider: string; model: string } | null> => {
+    try {
+      const res = await withTimeout(
+        ctx.connection.rpc.call('/dsh-prompt-optimizer', 'sessionModel', {}),
+        5000,
+        'sessionModel',
+      );
+      if (res.ok && res.value && typeof res.value === 'object') {
+        const v = res.value as { provider?: string; model?: string };
+        if (typeof v.provider === 'string' && typeof v.model === 'string') {
+          return { provider: v.provider, model: v.model };
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
   };
 
   // 2.5b 预览窗口会话绑定：卡片只在发起会话显示（切走不跟随）
   const getSessionId = (): string | null => getActiveSession();
-
-  // 2.6 宿主通道（临时对话 + 当前会话模型，零配置）：
-  // 每次优化从当前会话 fork 一个临时子会话（宿主生成合法 sessionId；不用 session.create——
-  // 自编 id 被宿主拒绝会静默失败 → 空轮询「永远优化中」，实测）；模型经 fork 继承，
-  // 结果经 session.history 轮询增量呈现（近似流式）
-  const hostApi = (ctx.connection.api as never) as {
-    fork(p: { sessionId: string }): Promise<{ sessionId?: string } | null>;
-    selectModel(p: { sessionId: string; provider: string; model: string }): Promise<unknown>;
-    prompt(p: { sessionId: string; mode: 'queue'; content: Array<{ type: 'text'; text: string }> }): Promise<unknown>;
-    history(p: { sessionId: string }): Promise<{ events?: unknown }>;
-    cancel(p: { sessionId: string }): Promise<unknown>;
-    models(p: { sessionId: string }): Promise<{ current?: { provider?: string; model?: string } } | null>;
-  };
-  const getHost = (): { api: typeof hostApi; parentSessionId: string } | null => {
-    const parentSessionId = getActiveSession();
-    if (!parentSessionId) return null;
-    return { api: hostApi, parentSessionId };
-  };
 
   // 3. 语言镜像
   let lang: Lang = langOf(ctx.locale.getLocale().active);

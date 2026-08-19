@@ -55,9 +55,14 @@ dsh plugin --profile web add file:/path/to/dsh-prompt-optimizer
 
 ## 🏗️ 架构
 
-- **client**（`dist/client.js`，经 `cordis.patch.yml` 装载）：输入槽位按钮 + 预览卡片 + 设置行；流式请求用浏览器 `fetch` 直连 API
-- **server half**（`lib/index.js`）：仅提供配置持久化——直接读写 `~/.dsh/prompt-optimizer-config.json`，经 loopback RPC 通道 `/dsh-prompt-optimizer` 暴露 `get`/`set`
-- **预览状态**：模块级事件总线（`preview-bus`），按钮 / 卡片 / 编排共享，不依赖会话 store 标准 props
+- **client**（`dist/client.js`，经 `cordis.patch.yml` 装载）：输入槽位按钮 + 预览卡片 + 设置行；两种通道——
+  - **会话默认模型（零配置，默认）**：走自有 RPC → 服务端真流式，不填任何 Key
+  - **自配 OpenAI 兼容 API**：浏览器 `fetch` 直连（需支持 CORS 与 SSE）
+- **server half**（`lib/index.js`）：配置持久化（读写 `~/.dsh/prompt-optimizer-config.json`，经 loopback RPC 通道 `/dsh-prompt-optimizer` 暴露 `get`/`set`）+ 宿主模型服务面——
+  - `sessionModel`：经宿主 `agentDefaultModel` 取当前会话/agent 默认模型（provider + model，免配置）
+  - `optimize.start / poll / abort`：经宿主 `llm.stream` 后台真流式，client 轮询增量呈现（近似流式）
+  - 不用 `session.create/fork`：渲染进程无法让**后台**会话执行生成（自编 id 被静默拒绝、fork 子会话不在前台不触发模型，实测「永远正在优化」）
+- **预览状态**：模块级事件总线（`preview-bus`），按钮 / 卡片 / 编排共享，不依赖会话 store 标准 props；预览窗口绑定发起会话（切走不跟随，切回恢复）
 
 ## 🔧 开发
 

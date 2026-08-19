@@ -12,7 +12,8 @@ import {
   type OptimizeErrorKind,
   type PromptConfig,
 } from './optimizer.js';
-import { runHostOptimize, type HostSessionApi } from './session-optimizer.js';
+import { runHostOptimize, type HostRpc } from './session-optimizer.js';
+import { buildSystemPrompt } from './optimizer.js';
 import { dispatchPreview } from './preview-bus.js';
 
 /**
@@ -40,12 +41,11 @@ export async function runOptimize(ctx: {
   getConfig(): PromptConfig;
   getLang(): Lang;
   getDraft(): string;
-  /** 解析当前会话模型（useSessionModel 开启时优先），不可得时返回 null（回退自定义 model） */
-  getSessionModel?(): Promise<string | null>;
-  /** 宿主通道（useSessionModel 开启时用）：临时对话 + 当前会话模型，零配置 */
+  /** 宿主模型（UI 标签）；宿主通道内部自行解析 */
+  getSessionModel?(): Promise<{ provider: string; model: string } | null>;
+  /** 宿主通道（useSessionModel 开启时用）：自有 RPC → server half 的 llm.stream，零配置 */
   host?: {
-    api: HostSessionApi;
-    parentSessionId: string;
+    rpc: HostRpc;
   };
   /** 发起优化的会话 id（绑定预览窗口，切会话不跟随） */
   getSessionId?(): string | null;
@@ -78,10 +78,10 @@ export async function runOptimize(ctx: {
     // 会话模型模式（默认）：宿主临时对话通道 —— 零配置，无需 checkConfig
     if (config.useSessionModel && ctx.host) {
       await runHostOptimize({
-        api: ctx.host.api,
-        parentSessionId: ctx.host.parentSessionId,
+        rpc: ctx.host.rpc,
         lang: ctx.getLang(),
         text: draft,
+        system: buildSystemPrompt(ctx.getLang()),
         signal: controller.signal,
         onDelta: (text) => dispatchPreview({ type: 'draft', text }),
       }).then(
@@ -108,11 +108,11 @@ export async function runOptimize(ctx: {
     }
 
     // 自定义模型模式：浏览器 fetch 直连自配 API（流式）
-    // 模型解析：useSessionModel（默认）→ 当前会话模型（仅作 model 名回退使用）；否则 → 自定义 model
+    // 模型解析：useSessionModel（默认）→ 宿主会话模型（仅作 model 名回退使用，需配置已就绪）；否则 → 自定义 model
     let model = config.model;
     if (config.useSessionModel) {
       const sessionModel = await ctx.getSessionModel?.();
-      if (sessionModel) model = sessionModel;
+      if (sessionModel && sessionModel.model) model = sessionModel.model;
     }
     const effective = { ...config, model };
 

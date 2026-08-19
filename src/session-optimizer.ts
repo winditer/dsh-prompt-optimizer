@@ -1,111 +1,25 @@
 /**
- * 宿主通道优化（临时对话 + 当前会话模型，零配置）。
+ * 宿主通道优化（零配置：server half 用 agentDefaultModel + llm.stream 真流式）。
  *
- * 渲染进程没有「一次性生成拿结果」的 RPC，因此每次优化从当前会话 fork 一个临时子会话：
- *   session.fork（宿主生成合法 sessionId，继承模型/工作区）→ session.prompt（queue 注入带规则的文本）
- *   → 轮询 session.history 增量取正文（近似流式）
- *   → assistant/message 事件出现（完成信号）或连续无变化（settle）结束；中止走 session.cancel。
- *   不用 session.create：自编 sessionId 会被宿主拒绝，create 静默失败导致空轮询（实测）。
- *
- * 事件契约以真实持久化样本校准（~/.dsh/sessions 下各 session 目录的 session.jsonl.zstd）：
- *   - user 消息：{type:'user/message', data:{role:'user', content:[{type:'text',text}]}}
- *   - 助手流式增量：{type:'assistant/chunk', data:{chunk:{type:'delta', blockType:'text', text}}}
- *   - 助手消息完成：{type:'assistant/message', data:{message:{role, content:[...]}}}（完成信号）
+ * 渲染进程没有「一次性生成拿结果」的 RPC，也不该用 session.create/fork 创建后台会话
+ * （后台会话不在前台不触发模型执行，实测「永远正在优化」）。正解取自 dsh-elf 的宿主
+ * 服务面：server half（lib/index.js）持有 llm 与 agentDefaultModel 服务——
+ *   sessionModel     → 当前会话/agent 默认模型（provider + model）
+ *   optimize.start   → llm.stream 后台流式，增量累积到任务
+ *   optimize.poll    → 取 { done, text }（接近 250ms 一次）
+ *   optimize.abort   → 标记中止，后台流尽快停
+ * client 经自有 RPC 通道（/dsh-prompt-optimizer）轮询增量呈现（近似流式）。
  */
 
 import type { Lang } from './optimizer.js';
-import { buildSystemPrompt } from './optimizer.js';
 
-/** connection.api.sessions 的最小面（注入式，便于单测）。 */
-export interface HostSessionApi {
-  /** 从当前会话 fork 临时子会话（宿主生成合法 sessionId；每次优化一个干净会话） */
-  fork?: (payload: { sessionId: string; atSeq?: number }) => Promise<{ sessionId?: string } | null>;
-  selectModel?: (payload: {
-    sessionId: string;
-    provider: string;
-    model: string;
-    reasoningEffort?: string;
-  }) => Promise<unknown>;
-  prompt?: (payload: { sessionId: string; mode: 'queue' | 'steer'; content: Array<{ type: 'text'; text: string }> }) => Promise<unknown>;
-  history?: (payload: { sessionId: string }) => Promise<{ events?: Array<{ event?: unknown }> }>;
-  cancel?: (payload: { sessionId: string }) => Promise<unknown>;
-  models?: (payload: { sessionId: string }) => Promise<{ current?: { provider?: string; model?: string } } | null>;
-}
-
-export interface HostTextBlock {
-  type?: string;
-  text?: string;
-  role?: string;
-  content?: HostTextBlock[] | string;
-  [k: string]: unknown;
-}
-
-/** 从事件 data 深搜收集文本块（`{type:'text',text}`），user 事件整体跳过。 */
-export function collectTexts(data: HostTextBlock | undefined | null, out: string[], skipRoleUser: boolean): void {
-  if (!data || typeof data !== 'object') return;
-  if (data.role === 'user' && skipRoleUser) return;
-  if (typeof data.type === 'string' && data.type !== 'user' && typeof data.text === 'string' && data.text.length > 0) {
-    out.push(data.text);
-    return;
-  }
-  if (Array.isArray(data.content)) {
-    for (const part of data.content) collectTexts(part as HostTextBlock, out, skipRoleUser);
-  }
-}
-
-export interface SessionFold {
-  /** 已收集的助手正文（流式 delta 增量拼接；若没有 delta 则用完成消息的全文兜底）。 */
-  text: string;
-  /** 是否出现 assistant/message 完成信号。 */
-  completed: boolean;
-}
-
-/** 把 history 事件列表折叠为 { 累积正文, 完成信号 }（按 seq 稳定排序；跳过 user 事件）。 */
-export function foldSessionText(events: Array<{ event?: unknown }> | undefined): SessionFold {
-  const empty: SessionFold = { text: '', completed: false };
-  if (!Array.isArray(events)) return empty;
-  type Ev = { type?: string; seq?: number; data?: HostTextBlock };
-  const sorted: Ev[] = events
-    .map((entry) => (entry && typeof entry === 'object' ? ((entry as { event?: unknown }).event as Ev) : undefined))
-    .filter((e): e is Ev => !!e && typeof e === 'object');
-  sorted.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-  const texts: string[] = [];
-  let completed = false;
-  let fallback = '';
-  for (const ev of sorted) {
-    const type = typeof ev.type === 'string' ? ev.type : '';
-    if (type.includes('user') && !type.includes('assistant')) continue;
-    if (type === 'assistant/chunk') {
-      // 流式增量：data.chunk = { type:'delta', blockType:'text', text }
-      const chunk = (ev.data as { chunk?: HostTextBlock } | undefined)?.chunk;
-      if (chunk && chunk.type === 'delta' && chunk.blockType === 'text' && typeof chunk.text === 'string' && chunk.text) {
-        texts.push(chunk.text);
-      }
-      continue;
-    }
-    if (type === 'assistant/message') {
-      // 完成信号；消息全文作为 delta 缺失时的兜底（避免与增量重复，仅无 delta 时使用）
-      completed = true;
-      const message = (ev.data as { message?: HostTextBlock } | undefined)?.message;
-      if (message && typeof message === 'object') {
-        const buf: string[] = [];
-        collectTexts(message, buf, false);
-        fallback += buf.join('');
-      }
-      continue;
-    }
-  }
-  // 完成信号时优先完整消息全文（流式增量轮询快照可能未到最终 delta，消息全文更完整）
-  const text = completed ? fallback || texts.join('') : texts.join('');
-  return { text, completed };
-}
-
-/** 累积文本按字符前缀计算增量（轮询近似流式用）。 */
-export function prefixDelta(prev: string, next: string): string {
-  const n = Math.min(prev.length, next.length);
-  let i = 0;
-  while (i < n && prev.charCodeAt(i) === next.charCodeAt(i)) i += 1;
-  return next.slice(i);
+/** 自有 RPC 通道的最小面（注入式，便于单测）。 */
+export interface HostRpc {
+  call(endpoint: string, payload?: Record<string, unknown>): Promise<{
+    ok: boolean;
+    value?: unknown;
+    error?: { code?: string; details?: unknown };
+  }>;
 }
 
 /** 给挂起的 RPC 调用加超时（宿主通道任何一步都不允许无限阻塞 →「一直正在优化」）。 */
@@ -125,114 +39,144 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
   });
 }
 
+export interface HostSessionInfo {
+  provider: string;
+  model: string;
+  reasoningEffort?: string;
+}
+
 export interface RunHostOptimizeOptions {
-  api: HostSessionApi;
-  /** 当前会话（fork 源 + 模型来源）。 */
-  parentSessionId: string;
+  rpc: HostRpc;
   lang: Lang;
   text: string;
+  system: string;
   signal: AbortSignal;
   onDelta: (text: string) => void;
   intervalMs?: number;
   timeoutMs?: number;
-  /** 无完成信号时，文本不再增长 N 轮后视为完成（契约兜底）。 */
-  settleRounds?: number;
-  /** 单步 RPC 挂起上限（默认 5s）。 */
   rpcTimeoutMs?: number;
 }
 
-const DEFAULT_INTERVAL_MS = 400;
+const DEFAULT_INTERVAL_MS = 250;
 const DEFAULT_TIMEOUT_MS = 120_000;
-const DEFAULT_SETTLE_ROUNDS = 3;
 const DEFAULT_RPC_TIMEOUT_MS = 5_000;
 
+function callRpc<R = never>(
+  rpc: HostRpc,
+  endpoint: string,
+  payload: Record<string, unknown>,
+  ms: number,
+): Promise<{ ok: true; value: R } | { ok: false; error?: { code?: string; details?: unknown } }> {
+  return withTimeout(
+    rpc.call(endpoint, payload),
+    ms,
+    endpoint,
+  ) as Promise<{ ok: true; value: R } | { ok: false; error?: { code?: string; details?: unknown } }>;
+}
+
+/** 取当前会话/agent 默认模型（零配置）。不可得时返回 null。 */
+export async function resolveHostSessionModel(
+  rpc: HostRpc,
+  rpcTimeoutMs = DEFAULT_RPC_TIMEOUT_MS,
+): Promise<HostSessionInfo | null> {
+  const res = await callRpc(rpc, 'sessionModel', {}, rpcTimeoutMs);
+  if (!res.ok || !res.value || typeof res.value !== 'object') return null;
+  const v = res.value as { provider?: unknown; model?: unknown };
+  if (typeof v.provider !== 'string' || typeof v.model !== 'string') return null;
+  const info: HostSessionInfo = { provider: v.provider, model: v.model };
+  if (typeof (res.value as { reasoningEffort?: unknown }).reasoningEffort === 'string') {
+    info.reasoningEffort = (res.value as { reasoningEffort?: string }).reasoningEffort;
+  }
+  return info;
+}
+
+/** 文本增量（字符前缀比较；轮询近似流式用）。 */
+export function prefixDelta(prev: string, next: string): string {
+  const n = Math.min(prev.length, next.length);
+  let i = 0;
+  while (i < n && prev.charCodeAt(i) === next.charCodeAt(i)) i += 1;
+  return next.slice(i);
+}
+
 /**
- * 宿主通道全流程：创建/复用临时会话 → 继承当前会话模型 → 注入优化 prompt
- * → 轮询 history 直至 assistant/message 完成信号（或 settle / abort / 超时）。返回最终正文。
+ * 宿主通道全流程：取会话默认模型 → 后台 llm.stream 启动 → 轮询增量直至 done
+ * （abort → 通知 server 中止后抛错；整体超时兜底）。返回最终正文。
  */
 export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<string> {
-  const { api, parentSessionId, lang, text, signal, onDelta } = opts;
+  const { rpc, lang: _lang, text, system, signal, onDelta } = opts;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const settleRounds = opts.settleRounds ?? DEFAULT_SETTLE_ROUNDS;
   const rpcTimeoutMs = opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
   if (signal.aborted) throw new Error('aborted');
 
-  // 1. fork 临时子会话（宿主生成合法 id；失败明确报错，不再静默空转）
-  const forked = await withTimeout(api.fork?.({ sessionId: parentSessionId }) ?? Promise.resolve(), rpcTimeoutMs, 'fork');
-  const sessionId = forked?.sessionId;
-  if (!sessionId) throw new Error('host-unavailable');
+  // 1. 会话默认模型（零配置；宿主服务不可用或无模型 → 明确失败，不静默）
+  const session = await resolveHostSessionModel(rpc, rpcTimeoutMs);
+  if (!session) throw new Error('host-unavailable');
 
-  // 2. 尝试继承当前会话的模型（fork 通常已继承；失败用子会话默认模型继续）
+  // 2. 启动后台流式任务
+  const startedPayload: Record<string, unknown> = {
+    provider: session.provider,
+    model: session.model,
+    text,
+    system,
+  };
+  if (session.reasoningEffort) startedPayload.reasoningEffort = session.reasoningEffort;
+  const start = await callRpc<{ taskId?: string }>(rpc, 'optimize.start', startedPayload, rpcTimeoutMs);
+  if (!start.ok || !start.value || typeof start.value.taskId !== 'string') {
+    throw new Error('host-start-rejected');
+  }
+  const taskId = start.value.taskId;
+
+  // 3. 轮询增量直至 done
+  const startedAt = Date.now();
+  let last = '';
   try {
-    const parent = await withTimeout(api.models?.({ sessionId: parentSessionId }) ?? Promise.resolve(), rpcTimeoutMs, 'models');
-    if (parent?.current?.model) {
-      await withTimeout(
-        api.selectModel?.({
-          sessionId,
-          provider: parent.current.provider ?? 'deepseek-official',
-          model: parent.current.model,
-        }) ?? Promise.resolve(),
-        rpcTimeoutMs,
-        'selectModel',
-      );
-    }
-  } catch {
-    // 忽略
-  }
-
-  // 3. 注入优化指令（规则拼进 user 文本——临时会话无持久 system）
-  const system = buildSystemPrompt(lang);
-  const content = `${system}\n\n${text}`;
-  await withTimeout(
-    api.prompt?.({ sessionId, mode: 'queue', content: [{ type: 'text', text: content }] }) ?? Promise.resolve(),
-    rpcTimeoutMs,
-    'prompt',
-  );
-
-  // 4. 轮询 history：delta 增量流式呈现；assistant/message 完成信号到达立即收尾
-  const started = Date.now();
-  let lastText = '';
-  let idleRounds = 0;
-  for (;;) {
-    if (signal.aborted) {
-      try {
-        await api.cancel?.({ sessionId });
-      } catch {
-        // 尽力取消
+    for (;;) {
+      if (signal.aborted) {
+        try {
+          await rpc.call('optimize.abort', { taskId });
+        } catch {
+          // 尽力
+        }
+        throw new Error('aborted');
       }
-      throw new Error('aborted');
-    }
-    if (Date.now() - started > timeoutMs) {
-      try {
-        await api.cancel?.({ sessionId });
-      } catch {
-        // 尽力取消
+      if (Date.now() - startedAt > timeoutMs) {
+        try {
+          await rpc.call('optimize.abort', { taskId });
+        } catch {
+          // 尽力
+        }
+        throw new Error('timeout');
       }
-      throw new Error('timeout');
+      let poll: { done?: boolean; text?: string; error?: string | null } | null = null;
+      try {
+        const res = await callRpc<{ done?: boolean; text?: string; error?: string | null }>(
+          rpc,
+          'optimize.poll',
+          { taskId },
+          rpcTimeoutMs,
+        );
+        if (res.ok && res.value) poll = res.value;
+      } catch {
+        // 单次轮询失败不致命，下一轮再试
+      }
+      if (poll) {
+        if (poll.error) throw new Error(poll.error);
+        const textNow = poll.text ?? '';
+        if (textNow !== last) {
+          onDelta(textNow);
+          last = textNow;
+        }
+        if (poll.done) return textNow;
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
-    let fold: SessionFold = { text: '', completed: false };
+  } finally {
+    // 任何退出路径都通知服务端停止后台任务
     try {
-      const page = await api.history?.({ sessionId });
-      fold = foldSessionText(page?.events);
+      await rpc.call('optimize.abort', { taskId });
     } catch {
-      // 单次取失败不致命，下一轮再试
+      // 尽力
     }
-    if (fold.completed) {
-      // 完成信号：以当前（含最终 delta/全文兜底）文本收尾
-      if (fold.text !== lastText && fold.text) onDelta(fold.text);
-      return fold.text;
-    }
-    if (fold.text !== lastText) {
-      idleRounds = 0;
-      const delta = prefixDelta(lastText, fold.text);
-      lastText = fold.text;
-      if (delta) onDelta(lastText);
-    } else {
-      idleRounds += 1;
-      if (idleRounds >= settleRounds) break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  return lastText;
 }
