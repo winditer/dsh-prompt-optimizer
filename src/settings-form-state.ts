@@ -4,6 +4,8 @@ export interface SettingsFormValues {
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** true：优化使用当前会话模型；false：使用 model */
+  useSessionModel: boolean;
 }
 
 export function validateSettingsForm(values: SettingsFormValues): Record<string, string> {
@@ -23,7 +25,7 @@ export function validateSettingsForm(values: SettingsFormValues): Record<string,
   }
 
   if (!values.apiKey.trim()) errors.apiKey = 'settings.apiKey';
-  if (!values.model.trim()) errors.model = 'settings.model';
+  if (!values.useSessionModel && !values.model.trim()) errors.model = 'settings.model';
 
   return errors;
 }
@@ -37,7 +39,7 @@ export interface SettingsFormState {
 }
 
 export const INITIAL_SETTINGS_FORM: SettingsFormState = {
-  values: { baseUrl: '', apiKey: '', model: '' },
+  values: { baseUrl: '', apiKey: '', model: '', useSessionModel: true },
   dirty: false,
   saved: false,
   error: null,
@@ -46,7 +48,7 @@ export const INITIAL_SETTINGS_FORM: SettingsFormState = {
 
 export type SettingsFormAction =
   | { type: 'seed'; values: SettingsFormValues; revision: number }
-  | { type: 'edit'; field: keyof SettingsFormValues; value: string }
+  | { type: 'edit'; field: keyof SettingsFormValues; value: string | boolean }
   | { type: 'commit'; revision: number }
   | { type: 'fail'; message: string };
 

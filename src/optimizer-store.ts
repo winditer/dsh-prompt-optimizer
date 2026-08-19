@@ -5,6 +5,7 @@
 import {
   checkConfig,
   optimizeStream,
+  resolveSessionModel,
   REQUEST_TIMEOUT_MS,
   toErrorKind,
   type Lang,
@@ -35,6 +36,8 @@ export async function runOptimize(ctx: {
   getConfig(): PromptConfig;
   getLang(): Lang;
   getDraft(): string;
+  /** 解析当前会话模型（useSessionModel 开启时优先），不可得时返回 null（回退自定义 model） */
+  getSessionModel?(): Promise<string | null>;
 }): Promise<void> {
   const config = ctx.getConfig();
   if (!checkConfig(config).ok) {
@@ -43,6 +46,13 @@ export async function runOptimize(ctx: {
   }
   const draft = ctx.getDraft().trim();
   if (!draft) return;
+  // 模型解析：useSessionModel（默认）→ 当前会话模型；否则/不可得 → 自定义 model
+  let model = config.model;
+  if (config.useSessionModel) {
+    const sessionModel = await ctx.getSessionModel?.();
+    if (sessionModel) model = sessionModel;
+  }
+  const effective = { ...config, model };
 
   // 并发把关：已有在途请求则丢弃本次触发（按钮 busy 态已禁用点击，这里是竞态的最后防线）
   if (activeController !== null) return;
@@ -62,7 +72,7 @@ export async function runOptimize(ctx: {
   let shown = '';
   try {
     const result = await optimizeStream({
-      config,
+      config: effective,
       text: draft,
       lang: ctx.getLang(),
       signal: controller.signal,

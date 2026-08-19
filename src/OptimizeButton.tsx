@@ -10,6 +10,7 @@ export interface OptimizeButtonProps {
   t: (key: string) => string;
   getConfig: () => PromptConfig;
   getLang: () => Lang;
+  getSessionModel?: () => Promise<string | null>;
 }
 
 const CSS_ID = 'dsh-prompt-optimizer/button.css';
@@ -57,7 +58,7 @@ function readDraft(): string {
 }
 
 export function OptimizeButton(props: OptimizeButtonProps) {
-  const { t, getConfig, getLang } = props;
+  const { t, getConfig, getLang, getSessionModel } = props;
 
   // 繁忙态：订阅模块级预览总线（替代会话 store props）
   const [busy, setBusy] = useState(() => getPreviewBusState().status === 'optimizing');
@@ -83,6 +84,7 @@ export function OptimizeButton(props: OptimizeButtonProps) {
       getConfig,
       getLang,
       getDraft: () => draft,
+      getSessionModel,
     });
   }, [busy, getConfig, getLang]);
 

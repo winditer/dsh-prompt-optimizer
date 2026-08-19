@@ -1,7 +1,7 @@
 /** 单测入口 — 所有任务在此汇总断言（esbuild 打包后由 scripts/test.mjs 执行） */
 
 import assert from 'node:assert';
-import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind, extractSseDelta } from '../src/optimizer.js';
+import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind, extractSseDelta, resolveSessionModel } from '../src/optimizer.js';
 import { NS, zh, en, langOf } from '../src/locales.js';
 import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-state.js';
 import { validateSettingsForm } from '../src/settings-form-state.js';
@@ -20,8 +20,35 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
     assert.deepStrictEqual(mergeConfig(undefined), DEFAULTS);
     assert.strictEqual(mergeConfig({}).baseUrl, DEFAULTS.baseUrl);
     assert.deepStrictEqual(mergeConfig({ baseUrl: ' http://a/ ', apiKey: ' k ', model: ' m ' }),
-      { baseUrl: 'http://a', apiKey: ' k ', model: 'm' });
+      { baseUrl: 'http://a', apiKey: ' k ', model: 'm', useSessionModel: true });
     assert.deepStrictEqual(mergeConfig({ baseUrl: '', apiKey: '', model: '' }), DEFAULTS);
+    // useSessionModel 布尔透传；非布尔回退默认 true
+    assert.strictEqual(mergeConfig({ useSessionModel: false }).useSessionModel, false);
+    assert.strictEqual(mergeConfig({ useSessionModel: 'x' as never }).useSessionModel, true);
+  });
+
+  await check('checkConfig: useSessionModel skips model requirement; resolveSessionModel reads current.model', async () => {
+    // 会话模型模式：model 可空
+    assert.strictEqual(checkConfig({ ...DEFAULTS, apiKey: 'k', model: '' }).ok, true);
+    // 自定义模式：model 必填
+    assert.strictEqual(
+      checkConfig({ ...DEFAULTS, apiKey: 'k', model: '', useSessionModel: false }).ok,
+      false,
+    );
+    // resolveSessionModel：正常返回 current.model，且 trim
+    const api = { sessions: { models: async () => ({ current: { model: ' deepseek-v4-flash ' } }) } };
+    assert.strictEqual(await resolveSessionModel(api as never), 'deepseek-v4-flash');
+    // 异常/缺面/空值 → null（调用方回退自定义 model）
+    assert.strictEqual(await resolveSessionModel(undefined), null);
+    assert.strictEqual(await resolveSessionModel({ sessions: {} } as never), null);
+    assert.strictEqual(
+      await resolveSessionModel({ sessions: { models: async () => null } } as never),
+      null,
+    );
+    assert.strictEqual(
+      await resolveSessionModel({ sessions: { models: async () => { throw new Error('x') } } } as never),
+      null,
+    );
   });
 
   await check('extractSseDelta: content/reasoning events, [DONE], non-data and malformed lines', () => {
@@ -45,7 +72,7 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
     assert.strictEqual(checkConfig({ ...DEFAULTS, apiKey: '' }).ok, false);
     const noKey = checkConfig({ ...DEFAULTS, apiKey: '' });
     if (noKey.ok === false) assert.strictEqual(noKey.reason, 'missing-key');
-    const noModel = checkConfig({ ...DEFAULTS, apiKey: 'k', model: '' });
+    const noModel = checkConfig({ ...DEFAULTS, apiKey: 'k', model: '', useSessionModel: false });
     if (noModel.ok === false) assert.strictEqual(noModel.reason, 'missing-model');
     const badUrl = checkConfig({ ...DEFAULTS, apiKey: 'k', baseUrl: 'not a url' });
     if (badUrl.ok === false) assert.strictEqual(badUrl.reason, 'bad-url');
@@ -313,11 +340,14 @@ async function runStateTests(check: (name: string, fn: () => void | Promise<void
   });
 
   await check('validateSettingsForm', () => {
-    assert.deepStrictEqual(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: 'm' }), {});
-    assert.ok(validateSettingsForm({ baseUrl: '', apiKey: 'k', model: 'm' }).baseUrl);
-    assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: '', model: 'm' }).apiKey);
-    assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: '' }).model);
-    const bad = validateSettingsForm({ baseUrl: 'nonsense', apiKey: 'k', model: 'm' });
+    assert.deepStrictEqual(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: 'm', useSessionModel: true }), {});
+    assert.ok(validateSettingsForm({ baseUrl: '', apiKey: 'k', model: 'm', useSessionModel: true }).baseUrl);
+    assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: '', model: 'm', useSessionModel: true }).apiKey);
+    // 会话模型模式：model 可空
+    assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: '', useSessionModel: true }).model === undefined);
+    // 自定义模式：model 必填
+    assert.ok(validateSettingsForm({ baseUrl: 'https://a.com', apiKey: 'k', model: '', useSessionModel: false }).model);
+    const bad = validateSettingsForm({ baseUrl: 'nonsense', apiKey: 'k', model: 'm', useSessionModel: true });
     assert.ok(bad.baseUrl);
   });
 

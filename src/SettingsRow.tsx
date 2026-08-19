@@ -188,12 +188,24 @@ export function SettingsRow(props: SettingsRowProps) {
             />
           </div>
           <div className="optiSettingsField">
+            <label className="optiSettingsLabel">
+              <input
+                type="checkbox"
+                checked={values.useSessionModel}
+                onChange={(e) => actions.edit('useSessionModel', e.target.checked)}
+              />{' '}
+              {t('settings.useSessionModel')}
+            </label>
+            <span className="optiSettingsHint">{t('settings.useSessionModelHint')}</span>
+          </div>
+          <div className="optiSettingsField">
             <label className="optiSettingsLabel" htmlFor="opti-model">{t('settings.model')}</label>
             <input
               id="opti-model"
               className="optiSettingsInput"
               value={values.model}
-              placeholder={DEFAULTS.model}
+              placeholder={values.useSessionModel ? '—' : DEFAULTS.model}
+              disabled={values.useSessionModel}
               onChange={(e) => actions.edit('model', e.target.value)}
             />
           </div>

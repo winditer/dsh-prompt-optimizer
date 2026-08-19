@@ -4,12 +4,15 @@ export interface PromptConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** true（默认）：优化请求使用当前会话的模型；false：使用下方自定义 model */
+  useSessionModel: boolean;
 }
 
 export const DEFAULTS: PromptConfig = {
   baseUrl: 'https://api.deepseek.com',
   apiKey: '',
   model: 'deepseek-chat',
+  useSessionModel: true,
 };
 
 export type Lang = 'zh' | 'en';
@@ -22,7 +25,8 @@ export function mergeConfig(raw: Partial<PromptConfig> | null | undefined): Prom
   const baseUrl = typeof raw?.baseUrl === 'string' && raw.baseUrl.trim() ? raw.baseUrl.trim() : DEFAULTS.baseUrl;
   const apiKey = typeof raw?.apiKey === 'string' ? raw.apiKey : DEFAULTS.apiKey;
   const model = typeof raw?.model === 'string' && raw.model.trim() ? raw.model.trim() : DEFAULTS.model;
-  return { baseUrl: normalizeBaseUrl(baseUrl), apiKey, model };
+  const useSessionModel = typeof raw?.useSessionModel === 'boolean' ? raw.useSessionModel : DEFAULTS.useSessionModel;
+  return { baseUrl: normalizeBaseUrl(baseUrl), apiKey, model, useSessionModel };
 }
 
 export type ConfigProblem = 'missing-key' | 'missing-model' | 'bad-url';
@@ -30,7 +34,8 @@ export type ConfigCheck = { ok: true; config: PromptConfig } | { ok: false; reas
 
 export function checkConfig(config: PromptConfig): ConfigCheck {
   if (!config.apiKey.trim()) return { ok: false, reason: 'missing-key' };
-  if (!config.model.trim()) return { ok: false, reason: 'missing-model' };
+  // 使用当前会话模型时无需自定义 model；仅自定义模式要求 model 非空
+  if (!config.useSessionModel && !config.model.trim()) return { ok: false, reason: 'missing-model' };
   try {
     const u = new URL(normalizeBaseUrl(config.baseUrl));
     if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('protocol');
@@ -276,4 +281,27 @@ export async function optimizeStream(opts: {
   const content = extractResult(full);
   if (!content.trim()) throw new OptimizeError('empty', 'empty completion');
   return content;
+}
+
+/**
+ * 解析「当前会话模型」：调 connection 的 session.models RPC，取 current.model。
+ * api 注入式（与 DSH 解耦便于单测）；任何失败返回 null（由调用方回退自定义 model）。
+ */
+export async function resolveSessionModel(
+  api:
+    | {
+        sessions?: {
+          models?: (payload?: unknown, signal?: AbortSignal) => Promise<{ current?: { model?: string } } | null>;
+        };
+      }
+    | undefined,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  try {
+    const res = await api?.sessions?.models?.({}, signal);
+    const m = res?.current?.model;
+    return typeof m === 'string' && m.trim() ? m.trim() : null;
+  } catch {
+    return null;
+  }
 }

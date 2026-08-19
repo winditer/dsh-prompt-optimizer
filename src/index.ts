@@ -2,7 +2,7 @@
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 import type { Lang, PromptConfig } from './optimizer.js';
-import { DEFAULTS, mergeConfig } from './optimizer.js';
+import { DEFAULTS, mergeConfig, resolveSessionModel } from './optimizer.js';
 import { NS, zh, en, langOf } from './locales.js';
 import type { OptimizerActions } from './optimizer-store.js';
 import { emitOptimizeRequest, emitOpenSettingsRequest } from './events.js';
@@ -46,6 +46,10 @@ export function apply(ctx: ClientContext) {
   };
   void loadConfig();
 
+  // 2.5 当前会话模型解析器（session.models RPC；失败返回 null → runOptimize 回退自定义 model）
+  const getSessionModel = (): Promise<string | null> =>
+    resolveSessionModel(ctx.connection.api as never);
+
   // 3. 语言镜像
   let lang: Lang = langOf(ctx.locale.getLocale().active);
   ctx.on('locale/change', (snap: { active: string }) => {
@@ -64,6 +68,7 @@ export function apply(ctx: ClientContext) {
           inject: () => ({
             getConfig: () => configMirror,
             getLang: () => lang,
+            getSessionModel,
           }),
         },
         OptimizeButton,
@@ -80,6 +85,7 @@ export function apply(ctx: ClientContext) {
             getConfig: () => configMirror,
             getLang: () => lang,
             openSettings: () => emitOpenSettingsRequest(),
+            getSessionModel,
           }),
         },
         PreviewCard,
@@ -95,6 +101,7 @@ export function apply(ctx: ClientContext) {
       baseUrl: merged.baseUrl,
       apiKey: merged.apiKey.trim(),
       model: merged.model,
+      useSessionModel: merged.useSessionModel,
     };
     try {
       const saved = await rpcConfig('set', { patch: { baseUrl: written.baseUrl, apiKey: written.apiKey, model: written.model } });
@@ -106,7 +113,12 @@ export function apply(ctx: ClientContext) {
   const resetConfig = async (): Promise<void> => {
     try {
       const saved = await rpcConfig('set', {
-        patch: { baseUrl: DEFAULTS.baseUrl, apiKey: DEFAULTS.apiKey, model: DEFAULTS.model },
+        patch: {
+          baseUrl: DEFAULTS.baseUrl,
+          apiKey: DEFAULTS.apiKey,
+          model: DEFAULTS.model,
+          useSessionModel: true,
+        },
       });
       configMirror = mergeConfig(saved as Partial<PromptConfig> | undefined);
     } catch (error) {
