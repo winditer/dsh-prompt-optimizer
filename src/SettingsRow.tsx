@@ -77,10 +77,10 @@ function injectCss() {
   color: var(--dsw-alias-label-primary);
 }
 .optiSettingsBtn.primary {
-  /* 不用 --dsw-alias-brand-primary-invert：其在暗色主题下会解析为深色 → 黑底黑字（用户实测）；
-     白字 + 主题主色（带稳定 fallback）保证任何主题下可读 */
+  /* 写死主色：主题变量在深夜模式会解析为浅/深极端色（黑底黑字、白底白字均被用户实测），
+     固定品牌蓝 + 白字保证任何主题可读 */
   color: #fff;
-  background: var(--dsw-alias-brand-primary, #1677ff);
+  background: #1677ff;
 }
 .optiSettingsErr {
   color: var(--dsw-alias-state-error-primary, #d03050);
