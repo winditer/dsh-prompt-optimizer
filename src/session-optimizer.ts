@@ -13,13 +13,30 @@
 
 import type { Lang } from './optimizer.js';
 
-/** 自有 RPC 通道的最小面（注入式，便于单测）。 */
+/** 自有通道的最小面（注入式，便于单测）。 */
 export interface HostRpc {
   call(endpoint: string, payload?: Record<string, unknown>): Promise<{
     ok: boolean;
     value?: unknown;
     error?: { code?: string; details?: unknown };
   }>;
+}
+
+/**
+ * HTTP JSON API 通道（dsh-elf 方式）：渲染进程页面由宿主 webServer 提供，相对路径 fetch
+ * 直达 `/dsh-prompt-optimizer/api/<method>`，完全绕开 connection.rpc.call——
+ * desktop 的 rpc.call 在同一流程第二次调用会挂死（实测 sessionModel 成功、第二次永不达）。
+ */
+export async function callHost<R = unknown>(
+  method: string,
+  args: Record<string, unknown>,
+): Promise<{ ok: boolean; value?: R; error?: { code?: string; details?: unknown } }> {
+  const response = await fetch(`/dsh-prompt-optimizer/api/${encodeURIComponent(method)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  return (await response.json()) as { ok: boolean; value?: R; error?: { code?: string; details?: unknown } };
 }
 
 /** 给挂起的 RPC 调用加超时（宿主通道任何一步都不允许无限阻塞 →「一直正在优化」）。 */
@@ -110,23 +127,82 @@ export function prefixDelta(prev: string, next: string): string {
  */
 export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<string> {
   const { rpc, lang: _lang, text, system, signal, onDelta, onStep, trace } = opts;
+  const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const rpcTimeoutMs = opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
   if (signal.aborted) throw new Error('aborted');
-  onStep?.('model');
-  trace?.(`runHostOptimize: single-call optimize.run textLen=${text.length}`);
 
-  // 单次 RPC：server 内部解析会话模型 + 跑完整流（超时对齐外层 deadline）
-  const run = await callRpc<{ text?: string }>(rpc, 'optimize.run', { text, system }, Math.max(timeoutMs, rpcTimeoutMs) + 5_000);
-  if (!run.ok || !run.value || typeof run.value.text !== 'string') {
-    trace?.('runHostOptimize: optimize.run FAILED');
-    const code = (!run.ok && run.error && run.error.code) || '';
-    const details = (!run.ok && run.error && run.error.details) || '';
+  // 1. 会话默认模型（零配置）
+  onStep?.('model');
+  trace?.(`runHostOptimize: sessionModel textLen=${text.length}`);
+  const session = await resolveHostSessionModel(rpc, rpcTimeoutMs);
+  if (!session) {
+    trace?.('runHostOptimize: sessionModel FAILED');
+    throw new Error('host-unavailable');
+  }
+
+  // 2. 启动后台流式
+  onStep?.('start');
+  const startPayload: Record<string, unknown> = {
+    provider: session.provider,
+    model: session.model,
+    text,
+    system,
+  };
+  if (session.reasoningEffort) startPayload.reasoningEffort = session.reasoningEffort;
+  const start = await callRpc<{ taskId?: string }>(rpc, 'optimize.start', startPayload, rpcTimeoutMs);
+  if (!start.ok || !start.value || typeof start.value.taskId !== 'string') {
+    const code = (!start.ok && start.error && start.error.code) || '';
+    const details = (!start.ok && start.error && start.error.details) || '';
+    trace?.('runHostOptimize: start FAILED');
     throw new Error(`host-start-rejected${code ? `: ${code} ${details || ''}`.trim() : ''}`);
   }
+  const taskId = start.value.taskId;
+  trace?.(`runHostOptimize: start ok task=${taskId}`);
+
+  // 3. 轮询增量直至 done（服务端显式完成信号，无 settle 兜底）
   onStep?.('poll');
-  trace?.(`runHostOptimize: optimize.run ok textLen=${run.value.text.length}`);
-  if (signal.aborted) throw new Error('aborted');
-  onDelta(run.value.text);
-  return run.value.text;
+  const startedAt = Date.now();
+  let last = '';
+  try {
+    for (;;) {
+      if (signal.aborted) throw new Error('aborted');
+      if (Date.now() - startedAt > timeoutMs) throw new Error('timeout');
+      let poll: { done?: boolean; text?: string; error?: string | null } | null = null;
+      try {
+        const res = await callRpc<{ done?: boolean; text?: string; error?: string | null }>(
+          rpc,
+          'optimize.poll',
+          { taskId },
+          rpcTimeoutMs,
+        );
+        if (res.ok && res.value) poll = res.value;
+      } catch {
+        // 单次轮询失败不致命，下一轮再试
+      }
+      if (poll) {
+        if (poll.error) {
+          trace?.('runHostOptimize: poll error ' + poll.error);
+          throw new Error(poll.error);
+        }
+        const textNow = poll.text ?? '';
+        if (textNow !== last) {
+          onDelta(textNow);
+          if (signal.aborted) throw new Error('aborted');
+          last = textNow;
+        }
+        if (poll.done) {
+          trace?.(`runHostOptimize: done textLen=${textNow.length}`);
+          return textNow;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  } finally {
+    try {
+      await rpc.call('optimize.abort', { taskId });
+    } catch {
+      // 尽力
+    }
+  }
 }

@@ -352,7 +352,7 @@ async function runIntegrationTests(check: (name: string, fn: () => void | Promis
     );
   });
 
-  await check('integration: single-call optimize.run end-to-end over real handler', async () => {
+  await check('integration: HTTP-style start+poll end-to-end over real handler (mock llm)', async () => {
     const ctx = {
       get: (name: string) => {
         if (name === 'agentDefaultModel') {
@@ -380,6 +380,7 @@ async function runIntegrationTests(check: (name: string, fn: () => void | Promis
       system: 'opt',
       signal: new AbortController().signal,
       onDelta: (t) => deltas.push(t),
+      intervalMs: 1,
     });
     assert.strictEqual(result, '好的，已优化');
     assert.deepStrictEqual(deltas, ['好的，已优化']);
@@ -530,7 +531,9 @@ async function runOptimizeStoreTests(check: (name: string, fn: () => void | Prom
     dispatchPreview({ type: 'close' });
     const rpc = {
       call: async (endpoint: string) => {
-        if (endpoint === 'optimize.run') return { ok: true, value: { text: '优化结果' } };
+        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'cmp-deepseek', model: 'm' } };
+        if (endpoint === 'optimize.start') return { ok: true, value: { taskId: 't' } };
+        if (endpoint === 'optimize.poll') return { ok: true, value: { done: true, text: '优化结果' } };
         return { ok: true, value: true };
       },
     };
@@ -603,15 +606,20 @@ async function runSettingsStoreTests(check: (name: string, fn: () => void | Prom
 }
 
 async function runPreviewBusTests(check: (name: string, fn: () => void | Promise<void>) => void) {
-  await check('host channel: single-call optimize.run returns full text', async () => {
-    let runCalls = 0;
+  await check('host channel: start+poll streams increments until done', async () => {
+    let pollCalls = 0;
+    const calls: string[] = [];
     const rpc = {
       call: async (endpoint: string, payload?: Record<string, unknown>) => {
-        assert.strictEqual(endpoint, 'optimize.run', 'single RPC only');
-        runCalls += 1;
-        assert.ok(String(payload?.text).length > 0);
-        assert.ok(String(payload?.system).length > 0);
-        return { ok: true, value: { text: '优化结果全文' } };
+        calls.push(endpoint);
+        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'cmp-deepseek', model: 'm' } };
+        if (endpoint === 'optimize.start') return { ok: true, value: { taskId: 't' } };
+        if (endpoint === 'optimize.poll') {
+          pollCalls += 1;
+          const p = Math.min(pollCalls, 3);
+          return { ok: true, value: { done: p === 3, text: p === 1 ? '好' : p === 2 ? '好的' : '好的，已优化' } };
+        }
+        return { ok: true, value: true };
       },
     };
     const deltas: string[] = [];
@@ -622,14 +630,22 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
       system: 'opt',
       signal: new AbortController().signal,
       onDelta: (t) => deltas.push(t),
+      intervalMs: 1,
     });
-    assert.strictEqual(result, '优化结果全文');
-    assert.deepStrictEqual(deltas, ['优化结果全文']);
-    assert.strictEqual(runCalls, 1);
+    assert.strictEqual(result, '好的，已优化');
+    assert.deepStrictEqual(deltas, ['好', '好的', '好的，已优化']);
+    assert.ok(pollCalls >= 3);
+    assert.ok(calls.includes('optimize.abort'), 'cleanup aborts background task');
   });
 
-  await check('host channel: optimize.run failure fails loud with error', async () => {
-    const rpc = { call: async () => ({ ok: false, error: { code: 'no-llm', details: 'llm service unavailable' } }) };
+  await check('host channel: start rejection surfaces server code', async () => {
+    const rpc = {
+      call: async (endpoint: string) => {
+        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'p', model: 'm' } };
+        if (endpoint === 'optimize.start') return { ok: false, error: { code: 'no-llm', details: 'llm unavailable' } };
+        return { ok: true, value: true };
+      },
+    };
     await assert.rejects(
       runHostOptimize({
         rpc: rpc as never,
@@ -639,18 +655,18 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
         signal: new AbortController().signal,
         onDelta: () => undefined,
       }),
-      /host-start-rejected/,
+      /host-start-rejected: no-llm llm unavailable/,
     );
   });
 
-  await check('host channel: abort after single call rejects', async () => {
+  await check('host channel: still-optimizing abort rejects', async () => {
     const controller = new AbortController();
-    let runCalls = 0;
     const rpc = {
-      call: async () => {
-        runCalls += 1;
-        await new Promise((resolve) => setTimeout(resolve, 30));
-        return { ok: true, value: { text: 'late' } };
+      call: async (endpoint: string) => {
+        if (endpoint === 'sessionModel') return { ok: true, value: { provider: 'p', model: 'm' } };
+        if (endpoint === 'optimize.start') return { ok: true, value: { taskId: 't' } };
+        if (endpoint === 'optimize.poll') return { ok: true, value: { done: false, text: '' } };
+        return { ok: true, value: true };
       },
     };
     const run = runHostOptimize({
@@ -660,10 +676,11 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
       system: 's',
       signal: controller.signal,
       onDelta: () => undefined,
+      intervalMs: 5,
+      timeoutMs: 50_000,
     });
-    setTimeout(() => controller.abort(), 5);
+    setTimeout(() => controller.abort(), 10);
     await assert.rejects(run, /aborted/);
-    assert.strictEqual(runCalls, 1);
   });
 
   // 模块级单例：先回到 idle，避免污染其他用例

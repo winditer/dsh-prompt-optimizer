@@ -11,7 +11,7 @@ import { PreviewCard } from './PreviewCard.tsx';
 import { SettingsRow } from './SettingsRow.tsx';
 import { createSettingsFormStore } from './settings-store.js';
 import type { HostRpc } from './session-optimizer.js';
-import { withTimeout } from './session-optimizer.js';
+import { withTimeout, callHost } from './session-optimizer.js';
 
 /**
  * 声明插件依赖的客户端服务（cordis service keys）：apply 内经 `ctx.<service>` 访问的服务必须在此声明。
@@ -64,17 +64,12 @@ export function apply(ctx: ClientContext) {
   // 会话模型、llm.stream 真流式（取自 dsh-elf 已验证的宿主服务面）。不用 session.create/
   // fork：后台会话不在前台不触发模型执行，自编 id 被静默拒绝 → 「永远正在优化」（实测）。
   const hostRpc: HostRpc = {
-    call: (endpoint, payload) =>
-      ctx.connection.rpc.call('/dsh-prompt-optimizer', endpoint, payload ?? {}),
+    call: (endpoint, payload) => callHost(endpoint, payload ?? {}),
   };
   const getHost = (): { rpc: HostRpc } => ({ rpc: hostRpc });
   const getSessionModel = async (): Promise<{ provider: string; model: string } | null> => {
     try {
-      const res = await withTimeout(
-        ctx.connection.rpc.call('/dsh-prompt-optimizer', 'sessionModel', {}),
-        5000,
-        'sessionModel',
-      );
+      const res = await withTimeout(callHost('sessionModel', {}), 5000, 'sessionModel');
       if (res.ok && res.value && typeof res.value === 'object') {
         const v = res.value as { provider?: string; model?: string };
         if (typeof v.provider === 'string' && typeof v.model === 'string') {
@@ -194,11 +189,7 @@ export function apply(ctx: ClientContext) {
             getHostStatus: async () => {
               // 宿主通道自检：零配置模式能否从 server half 拿到当前会话模型
               try {
-                const res = await withTimeout(
-                  ctx.connection.rpc.call('/dsh-prompt-optimizer', 'sessionModel', {}),
-                  5000,
-                  'sessionModel',
-                );
+                const res = await withTimeout(callHost('sessionModel', {}), 5000, 'sessionModel');
                 if (res.ok && res.value && typeof res.value === 'object') {
                   const v = res.value as { provider?: string; model?: string };
                   if (typeof v.provider === 'string' && typeof v.model === 'string') {
