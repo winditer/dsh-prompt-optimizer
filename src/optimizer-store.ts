@@ -85,6 +85,9 @@ export async function runOptimize(ctx: {
         signal: controller.signal,
         onDelta: (text) => dispatchPreview({ type: 'draft', text }),
         onStep: (step) => dispatchPreview({ type: 'step', step }),
+        trace: (msg) => {
+          void ctx.host?.rpc.call('debug.log', { msg }).catch(() => undefined);
+        },
       }).then(
         (finalText) => dispatchPreview({ type: 'show', result: finalText }),
         (e) => {

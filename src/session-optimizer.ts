@@ -54,6 +54,8 @@ export interface RunHostOptimizeOptions {
   onDelta: (text: string) => void;
   /** 宿主通道步骤进度（卡片显示，定位卡点） */
   onStep?: (step: 'model' | 'start' | 'poll') => void;
+  /** client 侧诊断埋点（fire-and-forget 写入 server 日志，还原卡点） */
+  trace?: (msg: string) => void;
   intervalMs?: number;
   timeoutMs?: number;
   rpcTimeoutMs?: number;
@@ -105,7 +107,7 @@ export function prefixDelta(prev: string, next: string): string {
  * （abort → 通知 server 中止后抛错；整体超时兜底）。返回最终正文。
  */
 export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<string> {
-  const { rpc, lang: _lang, text, system, signal, onDelta, onStep } = opts;
+  const { rpc, lang: _lang, text, system, signal, onDelta, onStep, trace } = opts;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const rpcTimeoutMs = opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
@@ -113,11 +115,17 @@ export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<str
 
   // 1. 会话默认模型（零配置；宿主服务不可用或无模型 → 明确失败，不静默）
   onStep?.('model');
+  trace?.('runHostOptimize: step model (call sessionModel)');
   const session = await resolveHostSessionModel(rpc, rpcTimeoutMs);
-  if (!session) throw new Error('host-unavailable');
+  if (!session) {
+    trace?.('runHostOptimize: sessionModel FAILED -> host-unavailable');
+    throw new Error('host-unavailable');
+  }
+  trace?.('runHostOptimize: sessionModel ok ' + session.provider + '/' + session.model);
 
   // 2. 启动后台流式任务
   onStep?.('start');
+  trace?.('runHostOptimize: step start (call optimize.start)');
   const startedPayload: Record<string, unknown> = {
     provider: session.provider,
     model: session.model,
@@ -127,12 +135,15 @@ export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<str
   if (session.reasoningEffort) startedPayload.reasoningEffort = session.reasoningEffort;
   const start = await callRpc<{ taskId?: string }>(rpc, 'optimize.start', startedPayload, rpcTimeoutMs);
   if (!start.ok || !start.value || typeof start.value.taskId !== 'string') {
+    trace?.('runHostOptimize: optimize.start FAILED -> host-start-rejected');
     throw new Error('host-start-rejected');
   }
   const taskId = start.value.taskId;
+  trace?.('runHostOptimize: optimize.start ok task=' + taskId);
 
   // 3. 轮询增量直至 done
   onStep?.('poll');
+  trace?.('runHostOptimize: step poll (loop start)');
   const startedAt = Date.now();
   let last = '';
   try {
@@ -166,13 +177,20 @@ export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<str
         // 单次轮询失败不致命，下一轮再试
       }
       if (poll) {
-        if (poll.error) throw new Error(poll.error);
+        if (poll.error) {
+          trace?.('runHostOptimize: poll error -> ' + poll.error);
+          throw new Error(poll.error);
+        }
         const textNow = poll.text ?? '';
         if (textNow !== last) {
           onDelta(textNow);
           last = textNow;
         }
-        if (poll.done) return textNow;
+        if (poll.done) {
+          trace?.('runHostOptimize: poll done textLen=' + textNow.length);
+          return textNow;
+        }
+        trace?.('runHostOptimize: poll #' + ' textLen=' + textNow.length);
       }
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
