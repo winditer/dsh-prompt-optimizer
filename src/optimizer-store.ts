@@ -55,6 +55,8 @@ export async function runOptimize(ctx: {
 }): Promise<void> {
   const config = ctx.getConfig();
   const draft = ctx.getDraft().trim();
+  probe.lastStep = 'run';
+  probe.lastError = '';
   ctx.trace?.(`runOptimize: called draftLen=${draft.length} useSessionModel=${config.useSessionModel}`);
   if (!draft) {
     ctx.trace?.('runOptimize: empty draft -> return');

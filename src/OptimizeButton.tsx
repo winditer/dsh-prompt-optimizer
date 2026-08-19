@@ -90,9 +90,18 @@ export function OptimizeButton(props: OptimizeButtonProps) {
   const handleClick = useCallback(() => {
     probe.clicks += 1;
     probe.lastClickAt = new Date().toISOString();
-    if (busy) return;
+    if (busy) {
+      probe.lastError = 'busy';
+      probe.lastStep = '';
+      return;
+    }
     const draft = draftRef.current || readDraft();
-    if (!draft.trim()) return;
+    if (!draft.trim()) {
+      probe.lastError = 'empty-draft';
+      probe.lastStep = '';
+      return;
+    }
+    probe.lastError = '';
     void runOptimize({
       getConfig,
       getLang,
