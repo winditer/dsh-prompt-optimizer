@@ -5,6 +5,7 @@ import type { Lang, PromptConfig } from './optimizer.js';
 import { runOptimize } from './optimizer-store.js';
 import { getPreviewBusState, subscribePreviewBus } from './preview-bus.js';
 import { onOptimizeRequest } from './events.js';
+import { probe } from './debug-probe.js';
 
 export interface OptimizeButtonProps {
   t: (key: string) => string;
@@ -87,6 +88,8 @@ export function OptimizeButton(props: OptimizeButtonProps) {
   useEffect(() => injectCss(), []);
 
   const handleClick = useCallback(() => {
+    probe.clicks += 1;
+    probe.lastClickAt = new Date().toISOString();
     if (busy) return;
     const draft = draftRef.current || readDraft();
     if (!draft.trim()) return;

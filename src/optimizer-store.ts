@@ -15,6 +15,7 @@ import {
 import { runHostOptimize, type HostRpc } from './session-optimizer.js';
 import { buildSystemPrompt } from './optimizer.js';
 import { dispatchPreview } from './preview-bus.js';
+import { probe } from './debug-probe.js';
 
 /**
  * 当前 in-flight 请求的控制器（模块级）：
@@ -96,7 +97,10 @@ export async function runOptimize(ctx: {
         system: buildSystemPrompt(ctx.getLang()),
         signal: controller.signal,
         onDelta: (text) => dispatchPreview({ type: 'draft', text }),
-        onStep: (step) => dispatchPreview({ type: 'step', step }),
+        onStep: (step) => {
+          probe.lastStep = step;
+          dispatchPreview({ type: 'step', step });
+        },
         trace: (msg) => {
           console.warn('[dsh-prompt-optimizer]', msg);
         },
@@ -112,7 +116,9 @@ export async function runOptimize(ctx: {
             return;
           }
           const kind = toErrorKind(e).kind;
-          dispatchPreview({ type: 'fail', kind, detail: String((e as { message?: unknown })?.message ?? e) });
+          probe.lastStep = '';
+          probe.lastError = String((e as { message?: unknown })?.message ?? e);
+          dispatchPreview({ type: 'fail', kind, detail: probe.lastError });
         },
       );
       return;
