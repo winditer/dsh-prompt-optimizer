@@ -108,19 +108,32 @@ export function OptimizeButton(props: OptimizeButtonProps) {
   useEffect(() => onOptimizeRequest(handleClick), [handleClick]);
 
   return (
-    <button
-      type="button"
-      className="dsh-po-btn"
-      aria-label={t('button.aria')}
-      title={t('button.aria')}
-      aria-busy={busy}
-      disabled={busy}
-      data-busy={busy}
-      onMouseDown={syncDraft}
-      onFocus={syncDraft}
-      onClick={handleClick}
-    >
-      {busy ? '⏳' : '✨'}
-    </button>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+      <button
+        type="button"
+        className="dsh-po-btn"
+        aria-label={t('button.aria')}
+        title={`${t('button.aria')} | clicks:${probe.clicks} step:${probe.lastStep || '-'} err:${probe.lastError || '-'}`}
+        aria-busy={busy}
+        disabled={busy}
+        data-busy={busy}
+        onMouseDown={syncDraft}
+        onFocus={syncDraft}
+        onClick={handleClick}
+      >
+        {busy ? '⏳' : '✨'}
+      </button>
+      <span
+        style={{
+          fontSize: '10px',
+          lineHeight: 1,
+          color: 'var(--dsw-alias-text-secondary, #8c93a1)',
+          userSelect: 'none',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {probe.clicks > 0 ? `c${probe.clicks}${probe.lastStep ? ` ${probe.lastStep}` : ''}` : ''}
+      </span>
+    </span>
   );
 }
