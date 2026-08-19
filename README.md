@@ -1,84 +1,174 @@
+<p align="center">
+  <img src="assets/screenshot.png" width="70%" alt="dsh-prompt-optimizer preview card">
+</p>
+
 # dsh-prompt-optimizer
 
-输入框 prompt 优化：一键把草稿润色为更清晰、更结构化的高质量 prompt。默认**零配置**直接使用当前会话模型（SSE 流式、推理过程实时可见）；也可自配任意 OpenAI 兼容 API。
+English | [中文](README.zh.md)
 
-![dsh-prompt-optimizer 示意图](assets/screenshot.png)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933.svg)](package.json)
+[![npm](https://img.shields.io/npm/v/dsh-prompt-optimizer.svg)](https://www.npmjs.com/package/dsh-prompt-optimizer)
 
-## ✨ 功能
+One-click prompt polishing for the DSH composer: select nothing, just type a draft and press **✨** (or `Alt+O`) — the plugin rewrites it into a clearer, better-structured prompt. **Zero-config by default**: it follows the current session's model through the harness host services, so no API key is needed. A self-configured OpenAI-compatible endpoint is supported as an alternative.
 
-- ✨ **一键优化**：输入栏右侧 ✨ 按钮，点击即以当前草稿生成优化结果；快捷键 `Alt+O`（焦点在输入框内时）等效触发
-- 🖼️ **流式预览卡片**：SSE 真流式——`llm.stream` 每个 `text-delta` 即时推送、逐字滚入；**推理过程（reasoning）先出**，等待阶段实时可见思考内容，完成后呈现「替换草稿 / 复制 / 重新优化 / 放弃」四个操作
-- 🆓 **零配置默认**：无需任何 Key，直接用当前会话/agent 默认模型（宿主 `agentDefaultModel` + `llm` 服务面）；勾选「使用当前会话模型」（默认开启）即可
-- 🔄 **替换草稿**：优化结果一键写回输入框（React 受控组件原生感知），不满意可 `重新优化` 或 `放弃`
-- 📋 **一键复制**：结果复制到剪贴板，1.2 秒「已复制」反馈
-- 🌏 **双语界面**：文案跟随 DSH 语言（zh / en）实时切换
-- ⚙️ **自配 API**：设置 → 通用设置 → Prompt 优化，填写接口地址、API Key、模型名
-- 💾 **配置自持持久化**：`~/.dsh/prompt-optimizer-config.json`（loopback RPC 读写，不依赖宿主 settings 注册表）
-- 🌓 **深色模式**：全部配色跟随 DSH 主题变量，深夜模式下按钮固定品牌蓝 + 白字，保证可读
-- 🔒 **纯本地 Key**：API Key 仅存于本地配置文件，浏览器 fetch 直连你的 API，不经过任何第三方服务
+## Features
 
-## 📦 安装
+- **One-click optimize** — a ✨ button on the composer's right; `Alt+O` while the composer is focused does the same
+- **True streaming preview** — real SSE over the harness `webServer`: every `text-delta` from `llm.stream` is pushed immediately and rendered token by token; **reasoning is streamed first**, so you watch the model think while it works
+- **Zero-config default** — reuses the current session/agent default model (host `agentDefaultModel` + `llm` services), no API key required
+- **Custom endpoint mode** — uncheck "follow session model" and plug in any OpenAI-compatible `/chat/completions` endpoint (base URL + key + model)
+- **Action row on completion** — replace the draft in place, copy, re-optimize, or dismiss
+- **Bilingual UI** — follows the DSH language (中文 / English) live, no reload
+- **Self-hosted config** — settings persist in `~/.dsh/prompt-optimizer-config.json` via a loopback RPC channel, independent of the host settings registry
+- **Dark-mode ready** — all colors follow DSH theme variables; fixed brand blue + white text in deep-night mode
+- **Local-only credentials** — the API key (custom mode only) lives in the local config file and goes only to the endpoint you configured
 
-本插件已发布到 npm registry，可直接按包名安装：
+## Screenshots
 
-```sh
-dsh plugin --profile web add dsh-prompt-optimizer
-```
+<p align="center">
+  <img src="assets/screenshot.png" width="90%" alt="Optimization preview card with reasoning and streaming result">
+</p>
 
-等效（临时用官方 CLI）：
+## Requirements
 
-```sh
-npx @deepseek-ai/dsh plugin --profile web add dsh-prompt-optimizer
-```
+- [DSH](https://github.com/deepseek-ai/deepseek-harness) with a `web` or `desktop` profile
+- Node.js `^22.19.0` or `>=24.0.0` (only needed to build from source)
+- [pnpm](https://pnpm.io) is recommended when installing into a profile
 
-本地目录开发方式：
+## Install
 
-```sh
-dsh plugin --profile web add file:/path/to/dsh-prompt-optimizer
-```
+> The bundle entry (`id: prompt-optimizer`) is self-declared by this package's `cordis.patch.yml` —
+> no manual patch file is needed.
 
-安装后重启 DSH（Web 或 Desktop）。
-
-> **桌面 Desktop profile**：同样支持 `dsh plugin --profile desktop add dsh-prompt-optimizer`；
-> 若此前以 `link:`（symlink）方式手工装配用于开发，保留 link: 即可实时同步工作区改动，无需改回 npm 版。
->
-> 插件仅声明必要的宿主服务（渲染进程输入槽位、host 的 `llm` / `agentDefaultModel` / `webServer`），
-> 不随安装拉取第三方运行时依赖。
-
-## ⚙️ 配置
-
-在 **设置 → 通用设置 → Prompt 优化** 中填写：
-
-| 字段 | 默认 | 说明 |
-|---|---|---|
-| 接口地址 | `https://api.deepseek.com` | 任意 OpenAI 兼容 `/chat/completions` 端点 |
-| API Key | — | 你的密钥（需支持流式） |
-| 模型名 | `deepseek-v4-flash` | 勾选「使用当前会话模型」（默认）时忽略此项 |
-
-配置保存于 `~/.dsh/prompt-optimizer-config.json`（与 DSH 其他配置同目录，卸载插件时一并清理）。
-
-> 接口需支持 CORS 与 SSE 流式（官方 DeepSeek / OneAPI 类网关均可）。
-
-## 🏗️ 架构
-
-- **client**（`dist/client.js`，经 `cordis.patch.yml` 装载）：输入槽位按钮 + 预览卡片 + 设置行；两种通道——
-  - **会话默认模型（零配置，默认）**：走自有 RPC → 服务端真流式，不填任何 Key
-  - **自配 OpenAI 兼容 API**：浏览器 `fetch` 直连（需支持 CORS 与 SSE）
-- **server half**（`lib/index.js`）：配置持久化（读写 `~/.dsh/prompt-optimizer-config.json`，经 loopback RPC 通道 `/dsh-prompt-optimizer` 暴露 `get`/`set`）+ 宿主模型服务面——
-  - `sessionModel`：经宿主 `agentDefaultModel` 取当前会话/agent 默认模型（provider + model，免配置）
-  - `optimize.stream`：**SSE 真流式**——host `webServer` 注册 `/dsh-prompt-optimizer/api/optimize.stream`，`llm.stream` 的 `text-delta` 即时 `res.write` 推送（`reasoning-delta` 以 `event: reasoning` 先行推送，等待阶段实时可见），client `fetch` + stream reader 逐 token 呈现
-  - `optimize.start / poll / abort`：后台流式累积的降级通道（轮询快照）
-  - 不用 `session.create/fork`：渲染进程无法让**后台**会话执行生成（自编 id 被静默拒绝、fork 子会话不在前台不触发模型，实测「永远正在优化」）
-  - 不用 `connection.rpc.call` 跑流式：desktop 渲染进程的 rpc.call 在同一流程第二次调用会挂死（实测 sessionModel 成功、第二次永不达），故宿主通道走 HTTP（webServer）
-- **预览状态**：模块级事件总线（`preview-bus`），按钮 / 卡片 / 编排共享，不依赖会话 store 标准 props；预览窗口绑定发起会话（切走不跟随，切回恢复）
-
-## 🔧 开发
+### From npm
 
 ```sh
-npm run build   # esbuild 打包 dist/client.js
-npm test        # 纯函数单测（node 运行 tests/entry.ts）
+dsh plugin --profile desktop add dsh-prompt-optimizer
 ```
 
-## 📄 License
+For a web profile, use `--profile web`. Restart DSH (quit fully and reopen), then a ✨ button appears to the right of the composer.
 
-MIT
+### From source (development)
+
+```sh
+git clone https://github.com/winditer/dsh-prompt-optimizer.git && cd dsh-prompt-optimizer
+npm install
+npm run build          # produces dist/client.js
+dsh plugin --profile desktop add .    # links the workspace into the profile by package name
+```
+
+Or install by hand: in the target profile's `package.json` (e.g. `~/.dsh/profiles/desktop/package.json`):
+
+```jsonc
+{
+  "dependencies": {
+    "dsh-prompt-optimizer": "link:/absolute/path/to/dsh-prompt-optimizer"
+    // ...
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [ /* ... */, "dsh-prompt-optimizer" ]
+    }
+  }
+}
+```
+
+then `pnpm install` inside the profile directory and restart DSH.
+
+### Uninstall
+
+Remove `dsh-prompt-optimizer` from the profile's `dependencies` and `dsh.profile.bundles`, clean up the installed package, and delete the config file `~/.dsh/prompt-optimizer-config.json` if you no longer need it.
+
+## Usage
+
+- Type a draft in the composer, click **✨** (or `Alt+O`) — the preview card appears over the composer
+- While optimizing: reasoning text scrolls in secondary color first, then the polished prompt streams in token by token
+- When done: **替换草稿** writes the result into the composer in place · **复制** copies it · **重新优化** re-runs · **放弃** dismisses
+- The preview belongs to the session where you started it: switching sessions hides it, switching back restores it
+
+## Configuration
+
+Open **设置 → 通用设置 → Prompt 优化**:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| 使用当前会话模型 | on | Follow the session/agent default model (zero-config). Off: enable the fields below |
+| 接口地址 (base URL) | `https://api.deepseek.com` | Any OpenAI-compatible `/chat/completions` endpoint |
+| API Key | — | Your key for the custom route (ignored in follow mode) |
+| 模型名 | `deepseek-v4-flash` | Model name (ignored in follow mode) |
+
+Settings are saved in `~/.dsh/prompt-optimizer-config.json` (same directory as other DSH config; removed with the plugin).
+
+> Custom endpoints must support CORS and SSE streaming (official DeepSeek, OneAPI-style gateways work).
+
+## Architecture
+
+Two halves, one package:
+
+- **Host half** — `lib/index.js`. Persists config over a loopback RPC channel (`/dsh-prompt-optimizer`, `get`/`set`), and registers an HTTP JSON API at `/dsh-prompt-optimizer/api` through the harness `webServer` service. Runs the session-default optimization via `llm.stream`; background streams live in an in-memory `Map` cleared on unload.
+- **Client half** — `src/*.ts`, bundled to `dist/client.js` (esbuild, wrapped in `__ModuleLoader__.load({ id: "dsh-prompt-optimizer", … })`; the id **must** equal the installed package name). Renders into the `conversation.input.right` button, `conversation.input.overlay` preview card and `settings.general.item` row; talks to the host with `fetch` POSTs.
+
+### Host API
+
+All endpoints are `POST /dsh-prompt-optimizer/api/<method>`; every response is `{ ok: true, value }` or `{ ok: false, error }`.
+
+| Method | Body | Returns |
+| --- | --- | --- |
+| `sessionModel` | `{}` | `{ provider, model, reasoningEffort? }` — the session's default model |
+| `optimize.stream` | `{ provider, model, text, system?, reasoningEffort? }` | `text/event-stream` — `event: reasoning` frames first, then `event: delta` per token, `event: done` at the end |
+| `optimize.start` | `{ provider, model, text, system?, reasoningEffort? }` | `{ taskId }` — background accumulation (fallback path) |
+| `optimize.poll` | `{ taskId }` | `{ done, text, error? }` — accumulated text while streaming |
+| `optimize.abort` | `{ taskId }` | `{ ok }` |
+
+Protocol details: only `POST` is accepted (405 otherwise); the body is JSON with a 1 MB cap; unknown methods return 404.
+
+## Security notes
+
+- **Default route sends no credentials** — it reuses the harness's configured provider.
+- The **custom-mode API key stays local** (`~/.dsh/prompt-optimizer-config.json`), and only goes to the endpoint you configured.
+- Optimizations appear only in the preview card; the polished text reaches a session only if you press **替换草稿**.
+
+## Development
+
+```sh
+npm run build   # esbuild: src/index.ts → dist/client.js (__ModuleLoader__ bundle)
+npm test        # node runner over tests/entry.ts (state machines, channels, SSE parser)
+```
+
+### Project layout
+
+```
+src/index.ts          Client entry — slot wiring, RPC/config glue, host probes
+src/OptimizeButton.tsx / PreviewCard.tsx / SettingsRow.tsx
+src/optimizer.ts      Config defaults, system prompts, OpenAI-compatible fetch/SSE client
+src/session-optimizer.ts  Host channel: sessionModel + SSE stream + fallback poll
+src/preview-state.ts  Preview card state machine (pure reducer)
+src/preview-bus.ts    Module-level event bus shared by button / card / orchestration
+lib/index.js          Host half — config persistence + HTTP JSON API (makeHandler + createApiRoute)
+dist/client.js        Built client bundle (__ModuleLoader__ format, load id = dsh-prompt-optimizer)
+cordis.patch.yml      Bundle entry declaration (insert: { id: prompt-optimizer, name: dsh-prompt-optimizer })
+scripts/build.mjs     Build script (esbuild + bundle wrapper)
+tests/entry.ts        Unit + integration tests (61)
+assets/               Screenshot
+```
+
+### Gotchas (learned the hard way)
+
+- **Bundle id must equal the package name** — `arrive()` throws `bundle loaded without registering <id>` otherwise. `scripts/build.mjs` hardcodes the correct id.
+- **Profile bundles don't get the cordis `timer` service** — use plain browser `setInterval`/`setTimeout` (disposed in React effect cleanup), exactly like the sibling `dsh-elf` bundle.
+- **Do not use `session.create/fork` for generation** — a background session never executes (the renderer's fabricated ids are silently rejected, forked sub-sessions don't trigger the model), which manifested as "optimizing forever". Drive the model from the host half via `llm.stream` instead.
+- **Do not run the streaming protocol over `connection.rpc.call`** — on desktop the renderer's rpc.call hangs on the *second* call within one flow (verified: `sessionModel` ok, next call never arrives). Host channels go over HTTP (`webServer`).
+- **Prefer `link:` over `file:`** when installing a workspace copy — `file:` copies files, so edits/rebuilds go stale.
+- **Client changes go live on page refresh; host changes require a full DSH restart.**
+- **A broken build script silently keeps the old bundle** — `npm run build` must print `✓ Built`; if it only prints a Node version banner, the script is failing (a past regression left a stale `dist/client.js` that looked "current").
+- **Fresh publishes can trip the profile's `minimumReleaseAge` policy** — if the profile enforces pnpm's release-age supply-chain check, a version published less than ~24 h ago fails `dsh plugin … add <pkg>` with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`. Add the exact `name@version` to `minimumReleaseAgeExclude` in the profile's `pnpm-workspace.yaml` (and keep the entry current when you release a new version):
+
+  ```yaml
+  minimumReleaseAgeExclude:
+    - dsh-prompt-optimizer@2.0.0
+  ```
+
+## License
+
+[MIT](LICENSE)
