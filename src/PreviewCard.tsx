@@ -12,7 +12,7 @@ export interface PreviewCardProps {
   getLang: () => Lang;
   openSettings: () => void;
   getSessionModel?: () => Promise<string | null>;
-  getHost?: () => { api: unknown; parentSessionId: string; sessionId: string } | null;
+  getHost?: () => { api: unknown; parentSessionId: string } | null;
   getSessionId?: () => string | null;
 }
 

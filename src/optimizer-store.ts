@@ -46,7 +46,6 @@ export async function runOptimize(ctx: {
   host?: {
     api: HostSessionApi;
     parentSessionId: string;
-    sessionId: string;
   };
   /** 发起优化的会话 id（绑定预览窗口，切会话不跟随） */
   getSessionId?(): string | null;
@@ -81,7 +80,6 @@ export async function runOptimize(ctx: {
       await runHostOptimize({
         api: ctx.host.api,
         parentSessionId: ctx.host.parentSessionId,
-        sessionId: ctx.host.sessionId,
         lang: ctx.getLang(),
         text: draft,
         signal: controller.signal,

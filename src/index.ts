@@ -67,22 +67,21 @@ export function apply(ctx: ClientContext) {
   const getSessionId = (): string | null => getActiveSession();
 
   // 2.6 宿主通道（临时对话 + 当前会话模型，零配置）：
-  // 可复用的固定临时会话承载优化；模型继承当前会话（selectModel），
+  // 每次优化从当前会话 fork 一个临时子会话（宿主生成合法 sessionId；不用 session.create——
+  // 自编 id 被宿主拒绝会静默失败 → 空轮询「永远优化中」，实测）；模型经 fork 继承，
   // 结果经 session.history 轮询增量呈现（近似流式）
-  // 临时会话 id：宿主按 session-<uuid> 约定校验，普通短 id 会被 create 拒绝（实测无会话 → 一直空轮询）
-  const PO_HOST_SESSION_ID = 'session-po-optimizer-9f3c2a7e-1b4d-4c8a-9e6f-2a5b7d1c3e9f';
   const hostApi = (ctx.connection.api as never) as {
-    create(p: { sessionId: string }): Promise<unknown>;
+    fork(p: { sessionId: string }): Promise<{ sessionId?: string } | null>;
     selectModel(p: { sessionId: string; provider: string; model: string }): Promise<unknown>;
     prompt(p: { sessionId: string; mode: 'queue'; content: Array<{ type: 'text'; text: string }> }): Promise<unknown>;
     history(p: { sessionId: string }): Promise<{ events?: unknown }>;
     cancel(p: { sessionId: string }): Promise<unknown>;
     models(p: { sessionId: string }): Promise<{ current?: { provider?: string; model?: string } } | null>;
   };
-  const getHost = (): { api: typeof hostApi; parentSessionId: string; sessionId: string } | null => {
+  const getHost = (): { api: typeof hostApi; parentSessionId: string } | null => {
     const parentSessionId = getActiveSession();
     if (!parentSessionId) return null;
-    return { api: hostApi, parentSessionId, sessionId: PO_HOST_SESSION_ID };
+    return { api: hostApi, parentSessionId };
   };
 
   // 3. 语言镜像

@@ -412,7 +412,7 @@ async function runOptimizeStoreTests(check: (name: string, fn: () => void | Prom
   await check('runOptimize: host channel runs with ZERO config — empty apiKey must not trigger guide', async () => {
     dispatchPreview({ type: 'close' });
     const api = {
-      create: async () => undefined,
+      fork: async () => ({ sessionId: 'session-child-1' }),
       models: async () => ({ current: { provider: 'deepseek-official', model: 'm' } }),
       selectModel: async () => undefined,
       prompt: async () => ({ accepted: true }),
@@ -533,7 +533,7 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
     let cancelCalls = 0;
     let historyCount = 0;
     const api = {
-      create: async () => { createCalls += 1; throw new Error('already-exists'); },
+      fork: async () => { createCalls += 1; return { sessionId: 'session-child-1' }; },
       models: async () => ({ current: { provider: 'deepseek-official', model: 'deepseek-v4-flash-cmp' } }),
       selectModel: async () => { selectCalls += 1; },
       prompt: async () => { promptCalls += 1; return { accepted: true }; },
@@ -554,7 +554,6 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
     const result = await runHostOptimize({
       api: api as never,
       parentSessionId: 'parent-1',
-      sessionId: 'po-optimizer',
       lang: 'zh',
       text: '草稿',
       signal: new AbortController().signal,
@@ -576,7 +575,7 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
   await check('host channel: assistant/message completion signal ends polling immediately', async () => {
     let historyCalls = 0;
     const api = {
-      create: async () => undefined,
+      fork: async () => ({ sessionId: 'session-child-1' }),
       prompt: async () => ({ accepted: true }),
       history: async () => {
         historyCalls += 1;
@@ -593,7 +592,6 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
     const result = await runHostOptimize({
       api: api as never,
       parentSessionId: 'p',
-      sessionId: 'session-po-optimizer-x',
       lang: 'zh',
       text: 'd',
       signal: new AbortController().signal,
@@ -606,19 +604,33 @@ async function runPreviewBusTests(check: (name: string, fn: () => void | Promise
     assert.strictEqual(historyCalls, 1, 'completion signal → single poll, no waiting');
   });
 
+  await check('host channel: fork failure fails loud instead of silent polling', async () => {
+    const api = { fork: async () => null, prompt: async () => ({ accepted: true }), history: async () => ({ events: [] }) };
+    await assert.rejects(
+      runHostOptimize({
+        api: api as never,
+        parentSessionId: 'p',
+        lang: 'zh',
+        text: 'x',
+        signal: new AbortController().signal,
+        onDelta: () => undefined,
+      }),
+      /host-unavailable/,
+    );
+  });
+
   await check('host channel: abort cancels the host session', async () => {
     const controller = new AbortController();
     let cancelCalls = 0;
     const api = {
-      create: async () => undefined,
+      fork: async () => ({ sessionId: 'session-child-1' }),
       prompt: async () => ({ accepted: true }),
-      history: async () => ({ events: [{ event: { type: 'assistant.message', seq: 1, data: { content: [] } } }] }),
+      history: async () => ({ events: [] }),
       cancel: async () => { cancelCalls += 1; },
     };
     const run = runHostOptimize({
       api: api as never,
       parentSessionId: 'p',
-      sessionId: 'po-optimizer',
       lang: 'zh',
       text: 'x',
       signal: controller.signal,

@@ -1,10 +1,11 @@
 /**
  * 宿主通道优化（临时对话 + 当前会话模型，零配置）。
  *
- * 渲染进程没有「一次性生成拿结果」的 RPC，因此用一个可复用的临时会话承载优化：
- *   session.create（固定 sessionId，幂等）→ session.selectModel（继承当前会话模型）
- *   → session.prompt（queue 注入带规则的文本）→ 轮询 session.history 增量取正文（近似流式）
+ * 渲染进程没有「一次性生成拿结果」的 RPC，因此每次优化从当前会话 fork 一个临时子会话：
+ *   session.fork（宿主生成合法 sessionId，继承模型/工作区）→ session.prompt（queue 注入带规则的文本）
+ *   → 轮询 session.history 增量取正文（近似流式）
  *   → assistant/message 事件出现（完成信号）或连续无变化（settle）结束；中止走 session.cancel。
+ *   不用 session.create：自编 sessionId 会被宿主拒绝，create 静默失败导致空轮询（实测）。
  *
  * 事件契约以真实持久化样本校准（~/.dsh/sessions 下各 session 目录的 session.jsonl.zstd）：
  *   - user 消息：{type:'user/message', data:{role:'user', content:[{type:'text',text}]}}
@@ -17,7 +18,8 @@ import { buildSystemPrompt } from './optimizer.js';
 
 /** connection.api.sessions 的最小面（注入式，便于单测）。 */
 export interface HostSessionApi {
-  create?: (payload: { sessionId?: string; workspaceId?: string; cwd?: string }) => Promise<unknown>;
+  /** 从当前会话 fork 临时子会话（宿主生成合法 sessionId；每次优化一个干净会话） */
+  fork?: (payload: { sessionId: string; atSeq?: number }) => Promise<{ sessionId?: string } | null>;
   selectModel?: (payload: {
     sessionId: string;
     provider: string;
@@ -125,9 +127,8 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
 
 export interface RunHostOptimizeOptions {
   api: HostSessionApi;
-  /** 当前会话（模型来源）。 */
+  /** 当前会话（fork 源 + 模型来源）。 */
   parentSessionId: string;
-  sessionId: string;
   lang: Lang;
   text: string;
   signal: AbortSignal;
@@ -150,21 +151,19 @@ const DEFAULT_RPC_TIMEOUT_MS = 5_000;
  * → 轮询 history 直至 assistant/message 完成信号（或 settle / abort / 超时）。返回最终正文。
  */
 export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<string> {
-  const { api, parentSessionId, sessionId, lang, text, signal, onDelta } = opts;
+  const { api, parentSessionId, lang, text, signal, onDelta } = opts;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const settleRounds = opts.settleRounds ?? DEFAULT_SETTLE_ROUNDS;
   const rpcTimeoutMs = opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
   if (signal.aborted) throw new Error('aborted');
 
-  // 1. 临时会话（幂等：已存在则忽略失败）
-  try {
-    await withTimeout(api.create?.({ sessionId }) ?? Promise.resolve(), rpcTimeoutMs, 'create');
-  } catch {
-    // 已存在（复用）或宿主暂不允许——继续，history 会告诉我们能不能用
-  }
+  // 1. fork 临时子会话（宿主生成合法 id；失败明确报错，不再静默空转）
+  const forked = await withTimeout(api.fork?.({ sessionId: parentSessionId }) ?? Promise.resolve(), rpcTimeoutMs, 'fork');
+  const sessionId = forked?.sessionId;
+  if (!sessionId) throw new Error('host-unavailable');
 
-  // 2. 继承当前会话的模型（provider + model）
+  // 2. 尝试继承当前会话的模型（fork 通常已继承；失败用子会话默认模型继续）
   try {
     const parent = await withTimeout(api.models?.({ sessionId: parentSessionId }) ?? Promise.resolve(), rpcTimeoutMs, 'models');
     if (parent?.current?.model) {
@@ -179,7 +178,7 @@ export async function runHostOptimize(opts: RunHostOptimizeOptions): Promise<str
       );
     }
   } catch {
-    // 模型继承失败：临时会话用其默认模型继续
+    // 忽略
   }
 
   // 3. 注入优化指令（规则拼进 user 文本——临时会话无持久 system）

@@ -11,7 +11,7 @@ export interface OptimizeButtonProps {
   getConfig: () => PromptConfig;
   getLang: () => Lang;
   getSessionModel?: () => Promise<string | null>;
-  getHost?: () => { api: unknown; parentSessionId: string; sessionId: string } | null;
+  getHost?: () => { api: unknown; parentSessionId: string } | null;
   getSessionId?: () => string | null;
 }
 
