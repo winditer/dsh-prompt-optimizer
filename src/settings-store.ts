@@ -1,6 +1,4 @@
-/** 设置表单 store（defineStore 薄封装）：草稿 + 校验 + 保存动作 */
-
-import { defineStore } from '@deepseek-ai/dsh-client-runtime/client';
+/** 设置表单 store：自实现 defineStore，零 @deepseek-ai 运行时依赖（桌面渲染器兼容） */
 import {
   INITIAL_SETTINGS_FORM,
   reduceSettingsForm,
@@ -18,15 +16,72 @@ export interface SettingsFormActions {
   validate(values: SettingsFormValues): Record<string, string> | null;
 }
 
-/** defineStore 返回的 store 句柄（同时可作类型占位，供注册时 `store:` 使用） */
 export interface SettingsFormStoreHandle {
-  // 运行时形状由 DSH 提供；此处仅为文档性类型
+  spec: {
+    init: () => SettingsFormState;
+    actions: Record<string, (d: SettingsFormState, ...args: any[]) => void>;
+  };
+  create(scopeKey?: string): {
+    actions: SettingsFormActions;
+    getSnapshot: () => SettingsFormState;
+    subscribe: (fn: () => void) => () => void;
+    store: unknown;
+    clearPersisted: () => void;
+  };
+}
+
+/** 自实现 defineStore —— 避免 @deepseek-ai/dsh-client-runtime/client 的 require 在桌面渲染器无法解析 */
+function defineStore(decl: {
+  init: () => SettingsFormState;
+  actions: Record<string, (d: SettingsFormState, ...args: any[]) => void>;
+}) {
+  return {
+    spec: decl,
+    create(_scopeKey?: string): {
+      actions: SettingsFormActions;
+      getSnapshot: () => SettingsFormState;
+      subscribe: (fn: () => void) => () => void;
+      store: unknown;
+      clearPersisted: () => void;
+    } {
+      let state = decl.init();
+      const listeners = new Set<() => void>();
+      const notify = () => { for (const fn of listeners) fn(); };
+      const store = {
+        getSnapshot: () => state,
+        subscribe: (fn: () => void) => { listeners.add(fn); return () => void listeners.delete(fn); },
+        update: (mutator: (draft: SettingsFormState) => void) => {
+          const draft = { ...state, values: { ...state.values } };
+          mutator(draft);
+          state = draft;
+          notify();
+        },
+      };
+      const actions: Record<string, (...args: any[]) => void> = {};
+      for (const key of Object.keys(decl.actions)) {
+        const mutate = decl.actions[key];
+        actions[key] = (...params: any[]) => {
+          store.update((draft: SettingsFormState) => { mutate(draft, ...params); });
+        };
+      }
+      return {
+        actions: actions as unknown as SettingsFormActions,
+        getSnapshot: store.getSnapshot,
+        subscribe: store.subscribe,
+        store,
+        clearPersisted: () => {
+          if (typeof localStorage !== 'undefined') {
+            try { localStorage.removeItem('dsh-prompt-optimizer/settings'); } catch {}
+          }
+        },
+      };
+    },
+  };
 }
 
 export const createSettingsFormStore = (): SettingsFormStoreHandle => {
-  const handle = defineStore({
+  return defineStore({
     init: (): SettingsFormState => ({
-      // 每实例副本：INITIAL_SETTINGS_FORM 是只读共享常量，勿跨实例共享引用（reducer 的 draft 写入需受保护）
       ...INITIAL_SETTINGS_FORM,
       values: { ...INITIAL_SETTINGS_FORM.values },
     }),
@@ -45,5 +100,4 @@ export const createSettingsFormStore = (): SettingsFormStoreHandle => {
       },
     },
   });
-  return handle as SettingsFormStoreHandle;
-}
+};

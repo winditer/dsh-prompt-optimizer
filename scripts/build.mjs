@@ -26,7 +26,6 @@ await esbuild.build({
     'react',
     'react/jsx-runtime',
     'react/jsx-dev-runtime',
-    '@deepseek-ai/*',
     'clsx',
   ],
   outfile: outRaw,

@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-optimizer",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "DSH 输入框 prompt 优化插件：一键把草稿润色为更清晰、更结构化的高质量 prompt。默认使用当前会话模型（零配置，SSE 流式 + 推理过程实时可见），也支持自配 OpenAI 兼容 API。",
   "license": "MIT",
   "repository": {
@@ -44,7 +44,6 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "dependencies": {},
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/cordis-plugin-group": "1.0.1",
@@ -147,6 +146,7 @@
     "@deepseek-ai/dsh-web-app": "0.1.0-rc.6",
     "@deepseek-ai/dsh-workflow": "0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1",
+    "esbuild": "^0.28.2",
     "node-addon-require-builtin": "^0.1.4",
     "pnpm": "11.7.0",
     "yaml": "^2.9.0"

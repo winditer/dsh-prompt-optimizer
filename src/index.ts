@@ -18,19 +18,19 @@ import { withTimeout, callHost } from './session-optimizer.js';
  * 值须为服务名而非包 id——与同形态先例一致（dsh-message-rail: ["slots","sessions"]；
  * dsh-better-sidebar 亦声明 locale）；错误声明会让 fiber 永久 PENDING，启动审计直接判失败。
  */
-export const inject = ['slots', 'sessions', 'locale', 'connection'];
+export const inject = ['slots', 'sessions', 'locale'];
 
 export function apply(ctx: ClientContext) {
   // 1. 文案
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'prompt-optimizer: locale registration');
 
-  // 2. 配置镜像：自持 RPC 配置（server half 读写 ~/.dsh/prompt-optimizer-config.json，通道
-  // '/dsh-prompt-optimizer'——同 dsh-sticky-note 模式）。不用 settingsScope：桌面应用的 host
-  // settings 注册表对未注册 namespace 返回 unavailable，set 静默失效（实测）。
+  // 2. 配置镜像：HTTP API（server half 读写 ~/.dsh/prompt-optimizer-config.json，
+  // 通道 '/dsh-prompt-optimizer/api/get|set'）。原先走 connection.rpc 环回通道，但桌面
+  // 宿主运行时没有 connection 服务（fiber 永久 PENDING → 启动挂死），统一走 webServer HTTP。
   let configMirror: PromptConfig = mergeConfig(undefined);
   let configEpoch = 0;
   const rpcConfig = async (endpoint: string, payload?: Record<string, unknown>): Promise<unknown> => {
-    const result = await ctx.connection.rpc.call('/dsh-prompt-optimizer', endpoint, payload ?? {});
+    const result = await callHost(endpoint, payload ?? {});
     if (!result.ok) {
       throw new Error(
         `config rpc ${endpoint} failed: ${(result.error && (result.error.details || result.error.code)) || 'rpc failed'}`,
