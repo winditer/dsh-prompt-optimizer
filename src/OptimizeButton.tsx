@@ -44,14 +44,48 @@ function injectCss() {
 }
 
 /**
- * 读取当前草稿：优先取焦点 textarea；否则回退到页面中「值非空」的 textarea
+ * 读取当前草稿：优先取焦点输入控件（textarea 或 DSH composer 的
+ * contenteditable div，后者是 dsh-web >= 0.1.0-rc.6 的实际输入面——
+ * Lexical 编辑器渲染为 <div contenteditable data-composer-input>，页面上
+ * 根本没有 textarea，老实现只认 textarea 导致草稿永远为空、点击静默返回，
+ * 表现为「按钮点了无反应」）；否则回退到页面中「值非空」的输入控件
  * （用户在输入的即当前草稿）。不依赖会话标准 kit 的 input hook——实测
  * input.right 渲染时该标准 props 未提供，组件会因调用 undefined hook
  * 崩溃被错误边界吞掉（PO-RIGHT-OK 探针可见而 ✨ 不可见）。
  */
+
+/** 从单个输入控件读文本：textarea 用 .value，contenteditable 用 innerText。 */
+function textOfInput(el: Element): string {
+  if (el instanceof HTMLTextAreaElement) return el.value;
+  if (el instanceof HTMLElement && el.isContentEditable) return el.innerText || '';
+  return '';
+}
+
+/** 是否 DSH 会话输入控件：textarea，或 composer 的 contenteditable 宿主。 */
+function isSessionInput(el: Element | null): boolean {
+  if (el === null) return false;
+  if (el instanceof HTMLTextAreaElement) return true;
+  const editable = el instanceof HTMLElement && el.isContentEditable;
+  const composer = el instanceof Element && el.closest('[data-composer-input]') !== null;
+  return editable || composer;
+}
+
 function readDraft(): string {
+  // 1. 焦点控件（用户在输入的那个）：textarea 或 contenteditable composer。
+  //    mousedown 时焦点尚未切走，activeElement 仍是输入框，直接命中。
   const active = document.activeElement;
-  if (active instanceof HTMLTextAreaElement) return active.value;
+  if (isSessionInput(active)) {
+    const text = textOfInput(active);
+    if (text.trim()) return text;
+  }
+  // 2. 页面中的 composer 宿主（点击按钮时焦点已移到按钮，activeElement 不再是
+  //    输入框；composer 是全局唯一的 resident div，直接按 data 属性找）。
+  const composer = document.querySelector<HTMLElement>('[data-composer-input]');
+  if (composer !== null && isSessionInput(composer)) {
+    const text = textOfInput(composer);
+    if (text.trim()) return text;
+  }
+  // 3. 回退：任意「值非空」的 textarea（兼容旧版宿主/其他文本输入面）。
   const all = document.querySelectorAll<HTMLTextAreaElement>('textarea');
   for (const ta of all) {
     if (ta.value.trim()) return ta.value;

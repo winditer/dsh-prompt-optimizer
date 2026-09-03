@@ -93,10 +93,28 @@ function injectCss() {
   document.head.appendChild(style);
 }
 
-/** 找 composer 输入框：优先焦点，否则第一个非 disabled textarea */
-function findComposer(): HTMLTextAreaElement | null {
+/** textarea 用 .value；contenteditable（DSH composer，Lexical div）用 innerText。 */
+function textOfInput(el: Element): string {
+  if (el instanceof HTMLTextAreaElement) return el.value;
+  if (el instanceof HTMLElement && el.isContentEditable) return el.innerText || '';
+  return '';
+}
+
+/** 是否 DSH 会话输入控件：textarea，或 composer 的 contenteditable 宿主。 */
+function isSessionInput(el: Element | null): boolean {
+  if (el === null) return false;
+  if (el instanceof HTMLTextAreaElement) return true;
+  const editable = el instanceof HTMLElement && el.isContentEditable;
+  const composer = el instanceof Element && el.closest('[data-composer-input]') !== null;
+  return editable || composer;
+}
+
+/** 找 composer 输入框：优先焦点，否则回退到页面中的 composer 宿主 / 第一个可用输入控件 */
+function findComposer(): Element | null {
   const active = document.activeElement;
-  if (active instanceof HTMLTextAreaElement && !active.disabled) return active;
+  if (active && isSessionInput(active)) return active;
+  const composer = document.querySelector('[data-composer-input]');
+  if (composer && isSessionInput(composer)) return composer;
   const all = document.querySelectorAll<HTMLTextAreaElement>('textarea');
   for (const ta of all) {
     if (!ta.disabled) return ta;
@@ -105,22 +123,46 @@ function findComposer(): HTMLTextAreaElement | null {
 }
 
 function readComposerText(): string {
-  const ta = findComposer();
-  return ta ? ta.value : '';
+  const el = findComposer();
+  return el ? textOfInput(el) : '';
 }
 
-/** 用原生 value setter 写回，让 React 受控组件感知（再派发 input 事件触发 onChange） */
+/**
+ * 写回 composer。textarea 用原生 value setter + input 事件（让 React 受控组件感知）；
+ * contenteditable（Lexical）用 select-all + execCommand('insertText')——lexical 监听原生
+ * input，execCommand 会触发正确的编辑事件并把 DOM 同步回编辑器 state。
+ */
 function writeComposerText(text: string): void {
-  const ta = findComposer();
-  if (!ta) return;
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-  if (setter) {
-    setter.call(ta, text);
-  } else {
-    ta.value = text;
+  const el = findComposer();
+  if (!el) return;
+  if (el instanceof HTMLTextAreaElement) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (setter) {
+      setter.call(el, text);
+    } else {
+      el.value = text;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.focus();
+    return;
   }
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
-  ta.focus();
+  // contenteditable composer
+  if (el instanceof HTMLElement && el.isContentEditable) {
+    el.focus();
+    if (document.execCommand) {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      // 原生 input 事件（insertText 需要第二个参数 nonce 以满足某些浏览器安全检查）
+      document.execCommand('insertText', false, text);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      el.innerText = text;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
 }
 
 function errorKey(kind: string | null): string {

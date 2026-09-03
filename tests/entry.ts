@@ -1,7 +1,7 @@
 /** 单测入口 — 所有任务在此汇总断言（esbuild 打包后由 scripts/test.mjs 执行） */
 
 import assert from 'node:assert';
-import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, canTrigger, optimize, OptimizeError, toErrorKind, extractSseDelta, resolveSessionModel } from '../src/optimizer.js';
+import { DEFAULTS, mergeConfig, normalizeBaseUrl, checkConfig, buildSystemPrompt, buildRequestBody, extractResult, stripLeadIn, canTrigger, optimize, OptimizeError, toErrorKind, extractSseDelta, resolveSessionModel } from '../src/optimizer.js';
 import { prefixDelta, resolveHostSessionModel, runHostOptimize, streamHostOptimize } from '../src/session-optimizer.js';
 import { NS, zh, en, langOf } from '../src/locales.js';
 import { INITIAL_PREVIEW, reducePreview, canOptimizeFrom } from '../src/preview-state.js';
@@ -123,6 +123,20 @@ async function runOptimizerTests(check: (name: string, fn: () => void | Promise<
 
   await check('extractResult unwraps tagged fence without trailing newline', () => {
     assert.strictEqual(extractResult('```json\n{"a":1}```'), '{"a":1}');
+  });
+
+  await check('stripLeadIn strips common lead-in prefixes so result is replaceable', () => {
+    // 中文引导语（带冒号）
+    assert.strictEqual(stripLeadIn('优化后的提示词：请先提交代码'), '请先提交代码');
+    assert.strictEqual(stripLeadIn('优化后的 Prompt：\n\n请先提交代码'), '请先提交代码');
+    assert.strictEqual(stripLeadIn('优化结果如下：\n1. 提交\n2. 发布'), '1. 提交\n2. 发布');
+    assert.strictEqual(stripLeadIn('优化后的内容: 执行以下操作'), '执行以下操作');
+    // 英文引导语
+    assert.strictEqual(stripLeadIn('Optimized prompt: Commit then publish'), 'Commit then publish');
+    assert.strictEqual(stripLeadIn('Rewritten instruction: run build'), 'run build');
+    // 无前缀：原样返回（包括正文恰好以「优化结果」开头但没有冒号）
+    assert.strictEqual(stripLeadIn('优化结果完美'), '优化结果完美');
+    assert.strictEqual(stripLeadIn('  你好  '), '你好');
   });
 
   await check('canTrigger', () => {

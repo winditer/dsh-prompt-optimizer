@@ -6,6 +6,7 @@ import {
   checkConfig,
   optimizeStream,
   resolveSessionModel,
+  stripLeadIn,
   REQUEST_TIMEOUT_MS,
   toErrorKind,
   type Lang,
@@ -92,8 +93,8 @@ export async function runOptimize(ctx: {
         onStep: (step) => dispatchPreview({ type: 'step', step }),
       }).then(
         (finalText) => {
-          // SSE 已逐 token 流过 draft；收尾仅切到结果态
-          dispatchPreview({ type: 'show', result: finalText });
+          // SSE 已逐 token 流过 draft；收尾仅切到结果态（并剥离可能的前缀引导语，保证可一键替换）
+          dispatchPreview({ type: 'show', result: stripLeadIn(finalText) });
         },
         (e) => {
           const isAbort =

@@ -52,15 +52,15 @@ export function checkConfig(config: PromptConfig): ConfigCheck {
 }
 
 const ZH_SYSTEM =
-  '你是一名 prompt 优化专家。用户会给你一段草稿 prompt，请在不改变其意图的前提下将其改写为更清晰、更结构化的高质量 prompt：' +
-  '补充缺失的目标、约束与期望输出格式（可从上下文合理推断），使用简洁明确的语言，去掉冗余。' +
-  '不得编造草稿中不存在的事实或技术细节。只输出优化后的 prompt 正文，不要任何解释、前缀或代码块包裹。';
+  '你是一名 prompt 润色器。用户会给你一句 prompt，请你把它润色成更清晰、更专业、更完整的一句话，但要保持这句话的原意和句式：' +
+  '是提问就仍是提问，是命令就仍是命令。不要扩写成提纲、模板、大纲或多段内容，不要把它改成角色扮演方案，不要添加草稿中没有的信息、要求或输出格式。' +
+  '只输出润色后的这一句话本身作为唯一结果，不要输出多个备选版本，不要任何引导语、编号、前缀或代码块围栏。';
 
 const EN_SYSTEM =
-  'You are a prompt optimization expert. Rewrite the user\'s draft prompt into a clearer, more structured, high-quality prompt ' +
-  'without changing its intent: fill in missing goals, constraints, and expected output format when reasonably inferable, ' +
-  'use concise and precise language, and remove redundancy. Do not invent facts or technical details absent from the draft. ' +
-  'Output ONLY the optimized prompt text, with no explanations, prefixes, or code fences.';
+  'You are a prompt polisher. The user gives you one prompt sentence; polish it into a clearer, more professional, more complete single sentence, ' +
+  'while preserving its original meaning and sentence type: a question stays a question, a command stays a command. ' +
+  'Do not expand it into an outline, template, multi-paragraph content, or a role-play plan; do not add information, requirements, or output formats absent from the draft. ' +
+  'Output ONLY that single polished sentence as the sole result — no alternative versions, no lead-ins, numbering, prefixes, or code fences.';
 
 export function buildSystemPrompt(lang: Lang): string {
   return lang === 'zh' ? ZH_SYSTEM : EN_SYSTEM;
@@ -79,12 +79,24 @@ export function buildRequestBody(config: PromptConfig, text: string, lang: Lang,
   };
 }
 
+/** 剥离常见引导前缀：model 偶尔在正文前输出「优化后的提示词：」「优化后的 Prompt：」
+ *  「优化结果如下：」等，让结果无法一键替换。带冒号/「如下」才剥，避免误伤正文本身
+ *  （如一段正文恰好以「优化结果」开头但无冒号）。 */
+export function stripLeadIn(text: string): string {
+  let s = text.trim();
+  // 中：「优化后的提示词：」「优化结果：」「优化后的 Prompt：」—— 必须带冒号或「如下」
+  s = s.replace(/^优化(?:后|过的|后的)?[ \t]*(?:提示词|Prompt|prompt|内容|结果|指令)(?:如下)?[ \t]*[\s：:][ \t]*/u, '').trim();
+  // 英："Optimized prompt:" "Rewritten result:" —— 必须带冒号
+  s = s.replace(/^(?:Optimized|Rewritten|Refined)\s+(?:prompt|instruction|content|result|draft)[\s：:][ \t]*/iu, '').trim();
+  return s;
+}
+
 export function extractResult(raw: string): string {
   let s = raw.trim();
   const fence = /^```[a-zA-Z0-9_+-]*\n([\s\S]*?)\n?```$/;
   const matched = s.match(fence);
   if (matched) s = matched[1].trim();
-  return s;
+  return stripLeadIn(s);
 }
 
 export function canTrigger(draft: string, busy: boolean): boolean {

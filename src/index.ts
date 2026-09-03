@@ -209,11 +209,14 @@ export function apply(ctx: ClientContext) {
     );
   });
 
-  // 7. 快捷键：Alt+O（焦点在 textarea 内时等效点击优化按钮）
+  // 7. 快捷键：Alt+O（焦点在输入控件内时等效点击优化按钮）
   const onKeydown = (e: KeyboardEvent) => {
     if (!e.altKey || e.code !== 'KeyO') return;
     const el = document.activeElement;
-    if (!(el instanceof HTMLTextAreaElement)) return;
+    const inInput =
+      el instanceof HTMLTextAreaElement ||
+      (el instanceof HTMLElement && (el.isContentEditable || el.closest('[data-composer-input]') !== null));
+    if (!inInput) return;
     e.preventDefault();
     emitOptimizeRequest();
   };
